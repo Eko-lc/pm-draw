@@ -1,0 +1,26 @@
+/* pm-draw 低保真功能性配色：中性灰打底，功能色只用于功能区分、状态提示、层级强调，不做视觉美化。 */
+:root{
+  color-scheme:light;
+  /* 中性层：底色、文字、框线与占位，不表达状态 */
+  --background:#f4f3f1;
+  --surface:#fff;
+  --foreground:#2b2b2b;
+  --muted:#6b6b68;
+  --border:#c6c4bf;
+  --shade:#ecebe8;
+  /* 功能色 1 · 雾蓝：主操作、当前导航、联动高亮、说明提示 */
+  --primary:#4d6a8a;
+  --primary-strong:#3e5a77;
+  --primary-soft:#e9eef4;
+  /* 功能色 2 · 灰绿：正向状态（已审查通过 / 符合预期） */
+  --ok:#4d7c5f;
+  --ok-soft:#e8f0ea;
+  /* 功能色 3 · 灰琥珀：注意状态（草稿 / 待确认 / 已改动待回归 / 需要调整） */
+  --warn:#7d612a;
+  --warn-soft:#f4eedd;
+  /* 功能色 4 · 砖红：异常状态（严重问题 / 保存失败）与截图标注覆盖层 */
+  --danger:#b0524a;
+  --danger-soft:#f6eae8;
+  --anno:var(--danger);
+  --font:system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
+}
