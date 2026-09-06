@@ -2,7 +2,7 @@
   "name": "pm-draw",
   "version": "1.0.0",
   "private": true,
-  "description": "PRD、低保真原型与产品流程走查 Skill",
+  "description": "精简功能 PRD、竞品截图参考与低保真 HTML 原型 Skill",
   "type": "module",
   "scripts": { "test": "node --test scripts/*.test.mjs" },
   "engines": { "node": ">=22" }

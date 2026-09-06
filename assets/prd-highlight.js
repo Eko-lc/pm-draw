@@ -11,6 +11,19 @@
  */
 (function() {
   function init() {
+    document.querySelectorAll('.frame-host').forEach(function(host) {
+      var canvas = host.querySelector('[data-frame-width]'), stage = host.querySelector('.frame-stage');
+      if (!canvas || !stage) return;
+      function fit() {
+        var width = Number(canvas.dataset.frameWidth), height = Number(canvas.dataset.frameHeight);
+        var scale = Math.min(1, host.clientWidth / width);
+        canvas.style.transform = 'scale(' + scale + ')';
+        stage.style.width = width * scale + 'px';
+        stage.style.height = height * scale + 'px';
+      }
+      fit();
+      new ResizeObserver(fit).observe(host);
+    });
     document.querySelectorAll('.proto-with-spec').forEach(function(scope) {
       function decorateCard(target, on) {
         var card = target.closest && target.closest('.channel-card');

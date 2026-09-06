@@ -64,7 +64,7 @@
     return lines.join('\n');
   }
   document.getElementById('export-json').addEventListener('click', () => download(`${model.projectId}-round-${model.round}-feedback.json`, JSON.stringify(exportData(), null, 2), 'application/json;charset=utf-8'));
-  document.getElementById('export-md').addEventListener('click', () => download(`${model.projectId}-round-${model.round}-feedback.md`, [`# ${model.projectTitle} · 走查反馈`, '', markdownReport(current), ...(model.history.length ? ['# 历史反馈原话（只读）', ...model.history.map(markdownReport)] : [])].join('\n\n'), 'text/markdown;charset=utf-8'));
+  document.getElementById('export-md').addEventListener('click', () => download(`${model.projectId}-round-${model.round}-feedback.md`, [`# ${model.projectTitle} · 方案反馈`, '', markdownReport(current), ...(model.history.length ? ['# 历史反馈原话（只读）', ...model.history.map(markdownReport)] : [])].join('\n\n'), 'text/markdown;charset=utf-8'));
   document.getElementById('import-json').addEventListener('click', () => document.getElementById('import-file').click());
   document.getElementById('import-file').addEventListener('change', async event => {
     try {
@@ -77,7 +77,7 @@
     } catch (error) { notice(`导入失败：${error.message}`, true); }
     finally { event.target.value = ''; }
   });
-  // 多窗口同时走查时，不让旧窗口静默覆盖新输入。
+  // 多窗口同时填写反馈时，不让旧窗口静默覆盖新输入。
   window.addEventListener('storage', event => { if (event.key === key) { storageConflict = true; notice('另一窗口修改了本轮反馈，已暂停覆盖。请导出当前输入后重新打开。', true); } });
   const observer = new IntersectionObserver(entries => { for (const entry of entries) if (entry.isIntersecting) { document.querySelectorAll('.toc-item').forEach(a => a.classList.toggle('active', a.hash === '#' + entry.target.id)); } }, { rootMargin: '-10% 0px -70% 0px' });
   document.querySelectorAll('.screen').forEach(s => observer.observe(s));

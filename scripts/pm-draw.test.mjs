@@ -111,10 +111,10 @@ test('prototype 渲染：信息层级、按钮主次、每屏名称状态与跳�
   assert.match(html, /状态：有数据/, '状态条包含当前状态');
   assert.match(html, /wf-h2/, 'heading level 2 分级渲染');
   assert.match(html, /button primary/, '主操作按钮强调样式');
-  assert.match(html, /跳转：新建资料 · 默认/, '线框操作注明跳转目标页面与状态');
+  assert.match(html, /class="fa-to">→ <a href="#screen-create-form">新建资料 · 默认/, '操作去向在画布外呈现');
   assert.match(html, /第 1 \/ 2 屏/, '流程位置指示');
   assert.match(html, /下一屏：新建资料 · 默认/, '下一屏导航');
-  assert.match(html, /流程终点/, '末屏标出流程终点');
+  assert.match(html, /最后一屏/, '阅读顺序不冒充业务流程终点');
   assert.match(html, /fa-role">主操作/, '操作列表标出主操作');
 });
 
@@ -136,7 +136,7 @@ test('原型说明面板：页面 / 布局 / 组件 note / 逻辑规则渲染，
   assert.match(html, /中部为资料列表区/, '布局内容');
   assert.match(html, /<h4>组件说明<\/h4>/, '组件说明分区');
   assert.match(html, /统计当前资料总数，只读/, '组件 note 内容');
-  assert.match(html, /class="wf-idx"[^>]*>1</, '线框组件编号徽标');
+  assert.doesNotMatch(html, /<span class="wf-idx"/, '编号不挤占产品画布位置');
   assert.match(html, /data-target="title"[^>]*><span class="comp-num">1</, '说明编号与线框组件联动');
   assert.match(html, /<h4>逻辑规则<\/h4>/, '逻辑规则分区');
   assert.match(html, /无权限时隐藏新建按钮/, '逻辑规则内容');
@@ -259,4 +259,111 @@ test('增量校验：错误 quote、重复需求、未知需求引用、重复�
   await main(['add-requirements', flowFile, '--file', allReq]);
   await main(['add-group', flowFile, '--file', badGroup]);
   await assert.rejects(() => main(['add-group', flowFile, '--file', badGroup]), /流程编号重复/);
+});
+
+test('原型参考离线展示、来源转义、版本绑定与跨轮复用', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'pm-draw-reference-'));
+  const flow = makeFlow(), flowFile = path.join(dir, 'flow.json');
+  const image = path.join(dir, 'reference.png');
+  await fs.writeFile(image, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64'));
+  const { hash } = await readImage(image);
+  flow.references = [{ id: 'reference-form', kind: 'competitor', title: '测试参考（非真实竞品）', source: '测试夹具', url: 'https://example.com/form', capturedAt: '2026-09-06T08:00:00Z', observed: '观察文本 <script>unsafe()</script>', application: '用于验证截图参考的呈现', screens: ['create-form'], image: { path: 'reference.png', sha256: hash } }];
+  flow.groups[0].screens[1].dataFlow = ['用户输入标题 → 保存资料 → 列表更新；失败时保留输入'];
+  await fs.writeFile(path.join(dir, 'PRD.md'), prdText);
+  await fs.writeFile(flowFile, JSON.stringify(flow));
+  const out = path.join(dir, 'site');
+  await main(['build', flowFile, '--out', out]);
+  const index = await fs.readFile(path.join(out, 'index.html'), 'utf8');
+  const group = await fs.readFile(path.join(out, 'main.html'), 'utf8');
+  assert.match(index, /<img src="data:image\/png;base64,/);
+  assert.match(index, /href="https:\/\/example.com\/form"/);
+  assert.match(index, /观察文本 &lt;script&gt;unsafe\(\)&lt;\/script&gt;/);
+  assert.match(index, /href="main.html#screen-create-form"/);
+  assert.match(group, /href="index.html#reference-reference-form"/);
+  assert.match(group, /<h4>数据流向<\/h4>.*用户输入标题 → 保存资料/s);
+  assert.doesNotMatch(group, /产品走查|PRD → 原型 → 走查|待回归/);
+
+  const model = JSON.parse(index.match(/<script id="pm-data" type="application\/json">(.*?)<\/script>/s)[1]);
+  const report = { schemaVersion: 1, kind: 'pm-draw-feedback', projectId: model.projectId, round: model.round, fingerprint: model.fingerprint, screens: model.screens.map(s => ({ ...s, mark: '需要调整', problem: '  原话\n保留  ', suggestion: '调整布局' })), groups: model.groups.map(g => ({ ...g, problem: '', suggestion: '' })), history: [] };
+  const feedbackFile = path.join(dir, 'feedback.json');
+  await fs.writeFile(feedbackFile, JSON.stringify(report));
+  flow.references[0].application = '参考内容已变化';
+  await fs.writeFile(flowFile, JSON.stringify(flow));
+  const nextFile = path.join(dir, 'round-2', 'flow.json');
+  await assert.rejects(() => main(['next-round', flowFile, '--feedback', feedbackFile, '--out', nextFile]), /版本不一致/);
+  flow.references[0].application = '用于验证截图参考的呈现';
+  await fs.writeFile(flowFile, JSON.stringify(flow));
+  await main(['next-round', flowFile, '--feedback', feedbackFile, '--out', nextFile]);
+  const next = JSON.parse(await fs.readFile(nextFile, 'utf8'));
+  assert.equal(next.references[0].image.path, '../reference.png');
+  assert.equal(next.history[0].screens[0].problem, '  原话\n保留  ');
+  assert.equal(next.round, 2);
+  next.groups[0].screens[1].dataFlow.push('测试新增说明');
+  await fs.writeFile(nextFile, JSON.stringify(next));
+  const nextOut = path.join(dir, 'round-2', 'site');
+  await main(['build', nextFile, '--out', nextOut]);
+  const nextHTML = await fs.readFile(path.join(nextOut, 'main.html'), 'utf8');
+  assert.match(nextHTML, /已更新/);
+  assert.doesNotMatch(nextHTML, /待回归/);
+  const oldImage = await fs.readFile(image);
+  await fs.writeFile(image, Buffer.concat([oldImage, Buffer.from('changed')]));
+  await assert.rejects(() => main(['build', nextFile, '--out', nextOut]), /参考截图已被替换/);
+});
+
+test('参考必须关联现有页面且来源可用；无数据流与操作时不输出空说明', async () => {
+  const flow = makeFlow();
+  const ref = { id: 'ref-form', kind: 'competitor', title: '测试', source: '测试夹具', url: 'https://example.com/form', capturedAt: '2026-09-06T08:00:00Z', observed: '测试观察', application: '测试应用', screens: ['create-form'], image: { path: 'shot.png', sha256: 'a'.repeat(64) } };
+  flow.references = [ref];
+  for (const change of [{ screens: ['missing'] }, { url: 'javascript:alert(1)' }, { url: undefined }, { image: { path: 'shot.png', sha256: 'invalid' } }]) {
+    flow.references = [{ ...ref, ...change }];
+    assert.throws(() => validate(flow, prdText));
+  }
+  delete flow.references;
+  const s = flow.groups[0].screens[1];
+  s.dataFlow = 'invalid';
+  assert.throws(() => validate(flow, prdText), /dataFlow/);
+  s.dataFlow = [];
+  s.actions = []; s.blocks = s.blocks.filter(b => b.type !== 'action');
+  const files = await buildToFiles(flow);
+  const article = files['main.html'].split('<article class="screen" id="screen-create-form">')[1].split('</article>')[0];
+  assert.doesNotMatch(article, /<h4>数据流向|<h4>可执行操作|本状态无可执行操作/);
+  assert.doesNotMatch(files['index.html'], /<section class="design-references">/);
+});
+
+test('PC 与移动端独立画布、区域定位；设计旁注不进入产品画面', async () => {
+  const flow = makeFlow();
+  const [desktop, mobile] = flow.groups[0].screens;
+  desktop.device = 'desktop'; desktop.frame = { width: 1440, height: 900 };
+  desktop.blocks = [
+    { id: 'nav', type: 'text', text: '产品导航', region: 'header', requirement: 'r-list' },
+    { id: 'body-columns', type: 'columns', children: [
+      { id: 'sidebar', type: 'section', width: 240, requirement: 'r-list', children: [{ id: 'menu', type: 'text', text: '资料管理', requirement: 'r-list' }] },
+      { id: 'main-body', type: 'section', requirement: 'r-list', children: desktop.blocks },
+    ], requirement: 'r-list' },
+  ];
+  mobile.device = 'mobile';
+  mobile.blocks[0].region = 'header';
+  mobile.blocks[1].note = '旁注：必填后允许提交';
+  mobile.blocks[2].region = 'footer';
+  mobile.blocks[2].requirement = '待确认';
+  mobile.pending = ['Q1：提交后的去向待确认'];
+  const files = await buildToFiles(flow), html = files['main.html'];
+  assert.match(html, /device-desktop" data-frame-width="1440" data-frame-height="900"/);
+  assert.match(html, /device-mobile" data-frame-width="390" data-frame-height="844"/);
+  assert.match(html, /data-comp="sidebar" style="width:240px;flex:0 0 240px;"/);
+  const mobileArticle = html.split('<article class="screen" id="screen-create-form">')[1].split('</article>')[0];
+  const canvas = mobileArticle.split('<div class="frame-host">')[1].split('</section></div><aside')[0];
+  assert.match(canvas, /wf-region-header/); assert.match(canvas, /wf-region-body/); assert.match(canvas, /wf-region-footer/);
+  assert.match(canvas, /data-comp="f-title"/); assert.match(canvas, /<button type="button">保存<\/button>/);
+  assert.doesNotMatch(canvas, /旁注|待确认|保存成功返回列表|原型说明|data-feedback|wf-idx|wf-jump/);
+  assert.match(mobileArticle, /旁注：必填后允许提交/);
+  const model = JSON.parse(html.match(/<script id="pm-data" type="application\/json">(.*?)<\/script>/s)[1]);
+  assert.equal(model.screens[1].device, 'mobile');
+  assert.deepEqual(model.screens[1].frame, { width: 390, height: 844 });
+});
+
+test('拒绝无效终端、画布尺寸、冲突栏宽和嵌套固定区域', () => {
+  for (const edit of [s => s.device = 'watch', s => s.actions[0].disabled = 'yes', s => s.frame = { width: 0, height: 844 }, s => s.blocks[0].width = 5000, s => { s.blocks[0].width = 240; s.blocks[0].weight = 1; }, s => s.blocks.push({ id: 'nested', type: 'section', requirement: 'r-list', children: [{ id: 'nested-child', type: 'text', text: '测试', requirement: 'r-list', region: 'footer' }] })]) {
+    const flow = makeFlow(); edit(flow.groups[0].screens[0]); assert.throws(() => validate(flow, prdText));
+  }
 });

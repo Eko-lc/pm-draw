@@ -88,7 +88,7 @@ export async function main(argv = process.argv.slice(2)) {
     const mode = options.mode || 'prototype', kind = options.kind || 'none';
     assert(['prototype', 'review'].includes(mode), 'mode 必须是 prototype 或 review');
     assert(['none', 'manual', 'url', 'runtime'].includes(kind), 'target.kind 无效');
-    assert(mode !== 'prototype' || kind === 'none', '有真实页面时请选择 review 模式，先生成走查计划');
+    assert(mode !== 'prototype' || kind === 'none', '原型使用 target.kind: none；竞品与旧页面截图放入 references');
     assert(mode !== 'review' || kind !== 'none', 'review 需要 manual、url 或 runtime 目标');
     const project = required(options, 'project');
     assert(/^[a-z][a-z0-9-]*$/.test(project), '--project 必须是小写字母开头的 kebab-case 编号');
@@ -160,6 +160,7 @@ export async function main(argv = process.argv.slice(2)) {
     m.baseline = Object.fromEntries(report.screens.map(s => [s.id, s.contentHash]));
     m.round++; delete m.approval;
     m.prd.path = path.relative(path.dirname(out), path.resolve(dir, m.prd.path));
+    for (const r of m.references || []) r.image.path = path.relative(path.dirname(out), path.resolve(dir, r.image.path));
     for (const s of screens(m)) { delete s.screenshot; delete s.blockedReason; delete s.changeSummary; }
     await saveJSON(out, m, true); console.log(out); return;
   }
