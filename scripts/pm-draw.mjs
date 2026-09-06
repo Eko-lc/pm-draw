@@ -1,26 +1,29 @@
 #!/usr/bin/env node
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { loadManifest, screens, live, assert, sha, planHash, requireApproval, saveJSON, readImage, validateReport, feedbackFingerprint, screenHash, prdStatus, validateGroupFragment, validateRequirementFragment } from './model.mjs';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { loadManifest, loadRaw, screens, live, assert, sha, planHash, requireApproval, saveJSON, saveManifest, readImage, validateReport, feedbackFingerprint, screenHash, prdStatus, validateGroupFragment, validateRequirementFragment } from './model.mjs';
 import { render } from './render.mjs';
 import { connectBrowser, inspectTarget } from './browser.mjs';
 
 const usage = `pm-draw · Node.js 22+，无 npm 运行依赖
   init <flow.json> --prd <PRD.md> --project <id> --title <名称> [--mode prototype|review] [--kind none|manual|url|runtime] [--url <地址>]
   add-requirements <flow.json> --file <需求数组.json>      增量追加 PRD 需求（校验原文引用）
-  add-group <flow.json> --file <流程分组.json>             增量追加一个流程分组（大 PRD 分块生成，避免超长 JSON 一次写出）
+  add-group <flow.json> --file <流程分组.json>             增量追加一个流程分组（写入 groups/<id>.json，flow.json 只留索引）
+  split <flow.json>                                       把内联分组拆分为 groups/<id>.json 独立文件，便于按组局部修改
   validate <flow.json>
   plan <flow.json> --out <plan.md>                    只读 PRD / 清单，不连接浏览器
   approve <flow.json> --hash <计划摘要> --quote <用户确认原话> [--screens <逗号分隔的已确认页面编号>]
   build <flow.json> --out <输出目录>                     生成 index.html 总索引 + 每个流程分组一个子页面
+  view <网页目录或HTML>                                  用专用 CDP Chrome 打开反馈页面
   import-shot <flow.json> --screen <id> --file <image> --observed <实际状态>
-  open <flow.json> --screen <id> [--proxy http://127.0.0.1:3456 | --browser chrome | --cdp http://127.0.0.1:9222]
+  open <flow.json> --screen <id> [--proxy http://127.0.0.1:3456 | --browser chrome | --cdp http://127.0.0.1:9223]
   inspect <flow.json> --screen <id> --target <targetId> [浏览器选项]
   act <flow.json> --screen <id> --target <targetId> --action <click|fill> --selector <已观察选择器> [--value <内容>] [浏览器选项]
   capture <flow.json> --screen <id> --target <targetId> --observed <实际状态> [浏览器选项]
   next-round <flow.json> --feedback <feedback.json> --out <next-flow.json>
-大 PRD 用 init → add-requirements → 多次 add-group 分块组装，最后 validate 做全局校验（覆盖 / 跳转）。
+大 PRD 用 init → add-requirements → 多次 add-group 分块组装（每组一个独立文件），最后 validate 做全局校验（覆盖 / 跳转）。
+修改某组功能时只需读写对应 groups/<id>.json 与 flow.json 索引，不必加载整个清单。
 approve 仅用于收到用户确认后记录证据。不能由 Agent 自己模拟用户确认。`;
 
 function args(argv) {
@@ -36,12 +39,11 @@ async function writeText(file, content) { await fs.mkdir(path.dirname(path.resol
 async function exists(file) { try { await fs.access(file); return true; } catch { return false; } }
 // 增量命令只解析 JSON 与读取 PRD，不跑全量 validate（中间态允许需求暂未覆盖、跳转暂未闭合）。
 async function loadLoose(file) {
-  const absolute = path.resolve(file);
-  const m = JSON.parse(await fs.readFile(absolute, 'utf8'));
+  const { m, dir, file: absolute, groupFiles } = await loadRaw(file);
   assert(m.prd && typeof m.prd.path === 'string', '缺少 prd.path');
-  const prdText = await fs.readFile(path.resolve(path.dirname(absolute), m.prd.path), 'utf8');
-  m.requirements ||= []; m.groups ||= [];
-  return { m, dir: path.dirname(absolute), file: absolute, prdText };
+  const prdText = await fs.readFile(path.resolve(dir, m.prd.path), 'utf8');
+  m.requirements ||= [];
+  return { m, dir, file: absolute, prdText, groupFiles };
 }
 function renderPlan({ m, prdHash }) {
   const lines = [`# ${m.project.title} · 第 ${m.round} 轮走查计划`, '', `目标：${m.target.kind}${m.target.url ? ' · ' + m.target.url : ''}`, `PRD SHA256：${prdHash}`, `计划 SHA256：${planHash(m, prdHash)}`, '', '请确认以下流程、页面状态及复现步骤。确认前不运行产品、不连接浏览器、不截图。', ''];
@@ -64,7 +66,7 @@ async function attachImage(context, s, file, observed, source, info = {}) {
   await fs.writeFile(dest, image.bytes);
   s.screenshot = { path: path.relative(context.dir, dest), sha256: image.hash, source, capturedAt: new Date().toISOString(), actualState: observed, ...info };
   delete s.blockedReason;
-  await saveJSON(context.file, context.m);
+  await saveManifest(context.file, context.m, context.groupFiles);
   return dest;
 }
 
@@ -72,8 +74,9 @@ export async function main(argv = process.argv.slice(2)) {
   if (!argv.length || ['--help', 'help'].includes(argv[0])) return console.log(usage);
   const { command, file, options } = args(argv);
   const allowed = {
-    init: ['prd', 'project', 'title', 'mode', 'kind', 'url'], 'add-requirements': ['file'], 'add-group': ['file'],
+    init: ['prd', 'project', 'title', 'mode', 'kind', 'url'], 'add-requirements': ['file'], 'add-group': ['file'], split: [],
     validate: [], plan: ['out'], approve: ['hash', 'quote', 'screens'], build: ['out'],
+    view: [],
     'import-shot': ['screen', 'file', 'observed', 'source'], 'next-round': ['feedback', 'out'],
     open: ['screen', 'browser', 'proxy', 'cdp'], inspect: ['screen', 'target', 'browser', 'proxy', 'cdp'],
     act: ['screen', 'target', 'action', 'selector', 'value', 'browser', 'proxy', 'cdp'],
@@ -82,6 +85,15 @@ export async function main(argv = process.argv.slice(2)) {
   assert(allowed[command], `未知命令：${command}\n${usage}`);
   assert(file, '需要 flow.json 路径');
   for (const key of Object.keys(options)) assert(allowed[command].includes(key), `未知参数：--${key}`);
+  if (command === 'view') {
+    const absolute = path.resolve(file), stat = await fs.stat(absolute);
+    const page = stat.isDirectory() ? path.join(absolute, 'index.html') : absolute;
+    assert(path.extname(page).toLowerCase() === '.html' && await exists(page), 'view 需要包含 index.html 的网页目录或 HTML 文件');
+    const browser = await connectBrowser();
+    try { console.log(JSON.stringify({ targetId: await browser.open(pathToFileURL(page).href), page })); }
+    finally { await browser.dispose(); }
+    return;
+  }
   if (command === 'init') {
     const absolute = path.resolve(file);
     assert(!(await exists(absolute)), `流程清单已存在：${file}；如需重建请先删除或改路径`);
@@ -100,7 +112,7 @@ export async function main(argv = process.argv.slice(2)) {
     console.log(`已创建骨架：${absolute}\n下一步：add-requirements 加入 PRD 需求，再逐个 add-group 加入流程分组，最后 validate。`); return;
   }
   if (command === 'add-requirements') {
-    const { m, prdText } = await loadLoose(file);
+    const { m, prdText, groupFiles } = await loadLoose(file);
     const frag = JSON.parse(await fs.readFile(required(options, 'file'), 'utf8'));
     assert(Array.isArray(frag) && frag.length, '--file 应为需求对象数组（{id,text,quote}）');
     const reqIds = new Set(m.requirements.map(r => r.id));
@@ -109,18 +121,33 @@ export async function main(argv = process.argv.slice(2)) {
       validateRequirementFragment(r, prdText);
       reqIds.add(r.id); m.requirements.push(r);
     }
-    await saveJSON(path.resolve(file), m);
+    await saveManifest(path.resolve(file), m, groupFiles);
     console.log(`已加入 ${frag.length} 条需求（共 ${m.requirements.length} 条）`); return;
   }
   if (command === 'add-group') {
-    const { m } = await loadLoose(file);
+    const { m, groupFiles } = await loadLoose(file);
     const g = JSON.parse(await fs.readFile(required(options, 'file'), 'utf8'));
     const reqIds = new Set(m.requirements.map(r => r.id));
     const takenGroupIds = new Set(m.groups.map(x => x.id)), takenScreenIds = new Set(screens(m).map(s => s.id));
     validateGroupFragment(g, reqIds, takenGroupIds, takenScreenIds, m.mode);
+    groupFiles.set(g.id, `groups/${g.id}.json`);
     m.groups.push(g);
-    await saveJSON(path.resolve(file), m);
-    console.log(`已加入流程分组 ${g.id}（共 ${m.groups.length} 组 / ${screens(m).length} 屏）`); return;
+    await saveManifest(path.resolve(file), m, groupFiles);
+    console.log(`已加入流程分组 ${g.id}（groups/${g.id}.json；共 ${m.groups.length} 组 / ${screens(m).length} 屏）`); return;
+  }
+  if (command === 'split') {
+    const { m, groupFiles } = await loadLoose(file);
+    assert(m.groups.length, '清单还没有流程分组');
+    const seen = new Set(); let converted = 0;
+    for (const g of m.groups) {
+      assert(g.id && typeof g.id === 'string', '分组缺少编号，无法拆分');
+      assert(!seen.has(g.id), `流程编号重复：${g.id}`); seen.add(g.id);
+      if (groupFiles.has(g.id)) continue;
+      groupFiles.set(g.id, `groups/${g.id}.json`); converted++;
+    }
+    assert(converted, '所有分组已是独立文件，无需拆分');
+    await saveManifest(path.resolve(file), m, groupFiles);
+    console.log(`已拆分 ${converted} 个分组到 groups/ 目录，flow.json 只保留索引；后续修改某组只需读写对应文件。`); return;
   }
   const context = await loadManifest(file), { m, dir, prdHash } = context;
   if (command === 'validate') {
@@ -135,7 +162,7 @@ export async function main(argv = process.argv.slice(2)) {
     assert(required(options, 'hash') === planHash(m, prdHash), '确认摘要与当前计划不一致，请重新生成并展示计划');
     m.approval = { planHash: options.hash, quote: required(options, 'quote'), confirmedAt: new Date().toISOString() };
     if (options.screens) { const ids = options.screens.split(',').map(s => s.trim()); assert(ids.length && ids.every(id => screens(m).some(s => s.id === id)), '确认范围包含不存在的页面编号'); m.approval.screenIds = [...new Set(ids)]; }
-    await saveJSON(context.file, m); console.log('已记录本轮计划确认'); return;
+    await saveManifest(context.file, m, context.groupFiles); console.log('已记录本轮计划确认'); return;
   }
   if (command === 'build') {
     const out = path.resolve(required(options, 'out'));
@@ -162,7 +189,7 @@ export async function main(argv = process.argv.slice(2)) {
     m.prd.path = path.relative(path.dirname(out), path.resolve(dir, m.prd.path));
     for (const r of m.references || []) r.image.path = path.relative(path.dirname(out), path.resolve(dir, r.image.path));
     for (const s of screens(m)) { delete s.screenshot; delete s.blockedReason; delete s.changeSummary; }
-    await saveJSON(out, m, true); console.log(out); return;
+    await saveManifest(out, m, context.groupFiles, true); console.log(out); return;
   }
   assert(m.mode === 'review', '截图与浏览器操作仅用于 review 模式');
   requireApproval(m, prdHash); // 在读取截图或连接任何浏览器之前检查。

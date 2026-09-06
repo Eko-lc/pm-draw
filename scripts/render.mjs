@@ -80,10 +80,10 @@ export async function render(context) {
   }
   const prdBadge = `<span class="badge${status.key === 'approved' ? ' approved' : ' changed'}">PRD：${e(status.label)}</span>`;
   const prdNotice = status.hint ? `<div class="notice">${e(status.hint)}</div>` : '';
-  const toolbar = `<div class="toolbar"><button id="export-json">导出 JSON</button><button id="export-md">导出 Markdown</button><button id="import-json">恢复本轮反馈 JSON</button><input id="import-file" type="file" accept="application/json,.json"></div><div id="save-status" role="status" aria-live="polite"></div><div id="progress"></div>`;
+  const toolbar = `<div class="toolbar"><button id="save-json" class="primary">保存反馈</button><button id="export-json">下载 JSON</button><button id="export-md">下载 Markdown</button><button id="import-json">恢复本轮反馈 JSON</button><input id="import-file" type="file" accept="application/json,.json"></div><div id="save-status" role="status" aria-live="polite"></div><div id="progress"></div>`;
   const modeLabel = m.mode === 'prototype' ? '方案对齐' : '产品走查';
   const eyebrow = m.mode === 'prototype' ? '低保真方案 / WIREFRAME' : '流程走查 / WALKTHROUGH';
-  const footer = `<footer class="footer">所有反馈按「页面—状态—问题—建议」保存于此浏览器，同轮各页面共享；任意页面导出的 JSON 都包含全部分组反馈。移动文件、清理浏览器或切换浏览器可能无法恢复本地记录，请导出 JSON 备份。历史反馈随下一轮页面一起携带。</footer>`;
+  const footer = `<footer class="footer">输入会自动暂存于此浏览器；点击「保存反馈」后，完整 JSON 写入当前网页文件夹。同轮各页面共享，下载的 JSON / Markdown 也包含全部分组反馈。历史反馈随下一轮页面一起携带。</footer>`;
 
   function renderScreen(g, s, si) {
     const num = numberOf.get(s.id), changeLabel = labelOf.get(s.id), link = resolve(g.id);
@@ -134,7 +134,7 @@ export async function render(context) {
     const groupsNav = m.groups.map((g, i) => `<nav class="toc-group" aria-label="${e(g.title)}"><a href="${g.id === current ? '#' : fileOf(g.id)}">${String(i + 1).padStart(2, '0')} ${e(g.title)}</a>${g.screens.map(s => `<a class="toc-item" href="${e(hrefTo(s.id, current))}">${e(s.page)} · ${e(s.state)} · ${s.device === 'mobile' ? '移动端' : 'PC 端'}</a>`).join('')}</nav>`).join('');
     return `<aside class="toc-sidebar"><div class="brand">PM DRAW</div><div class="muted">${m.mode === 'prototype' ? 'PRD · 原型 · 反馈' : 'PRD → 原型 → 走查'}</div><p class="muted">第 ${m.round} 轮 · ${modeLabel}</p><nav class="toc-group"><a href="${current === 'index' ? '#' : 'index.html'}">总索引</a></nav>${groupsNav}</aside>`;
   }
-  const shell = (title, current, main) => `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none'; base-uri 'none'; form-action 'none'"><title>${e(title)}</title>${marker('theme')}${marker('shared')}</head><body><div class="workspace">${sidebar(current)}<main>${main}</main></div><script id="pm-data" type="application/json">${json({ ...model, page: current })}</script>${marker('highlight')}${marker('review')}</body></html>`;
+  const shell = (title, current, main) => `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src http://127.0.0.1:9224; base-uri 'none'; form-action 'none'"><title>${e(title)}</title>${marker('theme')}${marker('shared')}</head><body><div class="workspace">${sidebar(current)}<main>${main}</main></div><script id="pm-data" type="application/json">${json({ ...model, page: current })}</script><script id="pm-feedback" type="application/json">{}</script>${marker('highlight')}${marker('review')}</body></html>`;
 
   function groupCard(g, i) {
     const shots = g.screens.filter(s => s.screenshot).length;
@@ -145,7 +145,21 @@ export async function render(context) {
     return `<section class="flow-group" id="group-${e(g.id)}"><div class="group-title"><span class="group-number">${String(i + 1).padStart(2, '0')}</span><div><h2><a href="${e(fileOf(g.id))}">${e(g.title)}</a></h2>${g.description ? `<p class="muted">${e(g.description)}</p>` : ''}<p class="muted">${g.screens.length} 个页面状态${m.mode === 'review' ? ` · 截图 ${shots} / ${g.screens.length}` : ''} · <a href="${e(fileOf(g.id))}">进入本组 →</a></p></div></div><ul>${items}</ul></section>`;
   }
 
-  const referenceSection = m.references?.length ? `<section class="design-references"><h2>设计参考</h2>${m.references.map(r => `<article class="reference-card" id="reference-${e(r.id)}"><h3><span class="badge">${r.kind === 'competitor' ? '竞品参考' : '旧页面'}</span> ${e(r.title)}</h3><p><strong>观察：</strong>${e(r.observed)}</p><p><strong>应用：</strong>${e(r.application)}</p><p class="muted">关联页面：${r.screens.map(id => `<a href="${e(hrefTo(id, 'index'))}">${e(screenById.get(id).page)} · ${e(screenById.get(id).state)}</a>`).join('、')}</p><details><summary>查看截图与来源</summary><img src="${referenceImages.get(r.id)}" alt="${e(r.title)} · 参考截图" loading="lazy"><p class="shot-caption">来源：${e(r.source)} · ${e(r.capturedAt)}${r.url ? ` · <a href="${e(r.url)}" target="_blank" rel="noopener noreferrer">原始页面</a>` : ''}</p></details></article>`).join('')}</section>` : '';
+  function renderReference(r) {
+    const head = `<h3><span class="badge">${r.kind === 'competitor' ? '竞品参考' : '旧页面'}</span> ${e(r.title)}</h3><p><strong>观察：</strong>${e(r.observed)}</p><p><strong>应用：</strong>${e(r.application)}</p><p class="muted">关联页面：${r.screens.map(id => `<a href="${e(hrefTo(id, 'index'))}">${e(screenById.get(id).page)} · ${e(screenById.get(id).state)}</a>`).join('、')}</p>`;
+    const caption = `<p class="shot-caption">来源：${e(r.source)} · ${e(r.capturedAt)}${r.url ? ` · <a href="${e(r.url)}" target="_blank" rel="noopener noreferrer">原始页面</a>` : ''}</p>`;
+    const changes = r.changes || [];
+    if (!changes.length) return `<article class="reference-card" id="reference-${e(r.id)}">${head}<details><summary>查看截图与来源</summary><img src="${referenceImages.get(r.id)}" alt="${e(r.title)} · 参考截图" loading="lazy">${caption}</details></article>`;
+    const marks = changes.map((c, i) => {
+      const n = i + 1, key = `ref-${r.id}-${n}`, parts = [];
+      if (c.rect) parts.push(`<div class="shot-pin" data-comp="${e(key)}" style="left:${c.rect[0]}%;top:${c.rect[1]}%;width:${c.rect[2]}%;height:${c.rect[3]}%" title="${e(c.change)}"><span>${n}</span></div>`);
+      if (c.pin) parts.push(`<div class="shot-dot" data-comp="${e(key)}" style="left:${c.pin[0]}%;top:${c.pin[1]}%" title="${e(c.change)}">${c.rect ? '' : `<span>${n}</span>`}</div>`);
+      return parts.join('');
+    }).join('');
+    const changeList = `<h4>变更点与更新逻辑</h4><ol class="anno-list">${changes.map((c, i) => `<li class="anno" data-target="ref-${e(r.id)}-${i + 1}"><div class="anno-head"><span class="anno-num">${i + 1}</span></div><div class="anno-row"><span class="anno-label">原逻辑</span><span>${e(c.original)}</span></div><div class="anno-row"><span class="anno-label">修改点</span><span>${e(c.change)}</span></div></li>`).join('')}</ol>`;
+    return `<article class="reference-card" id="reference-${e(r.id)}">${head}<div class="screenshot"><img src="${referenceImages.get(r.id)}" alt="${e(r.title)} · 旧页面截图" loading="lazy">${marks}</div>${caption}${changeList}</article>`;
+  }
+  const referenceSection = m.references?.length ? `<section class="design-references"><h2>设计参考</h2>${m.references.map(renderReference).join('')}</section>` : '';
 
   const reviewNotice = m.mode === 'review' ? `<div class="notice">已接入 ${imageMap.size} / ${ordered.length} 张实际截图。${imageMap.size < ordered.length ? '走查材料尚未齐全，缺失页面保留待采集或阻塞说明。' : '分组页面左侧为实际产品，右侧为设计原意与原型说明。'}</div>` : '';
   const indexMain = `<header class="intro"><div class="eyebrow">${eyebrow} · 总索引</div><h1>${e(m.project.title)}</h1><p class="muted">${m.groups.length} 个流程 · ${ordered.length} 个页面状态 · 第 ${m.round} 轮 ${prdBadge}</p><p>按流程查看页面原型、关键规则、数据流向与状态变化；可在每屏标记问题和修改建议。</p>${prdNotice}${reviewNotice}${toolbar}</header>${m.groups.map((g, i) => groupCard(g, i)).join('')}${referenceSection}${history.length ? `<details class="history-archive"><summary>全部历史反馈原话（含已移出本轮的页面）</summary>${history.map(h => `<h3>第 ${h.round} 轮</h3>${h.groups.map(g => `<h4>${e(g.title)}</h4><pre class="verbatim">问题：${e(g.problem)}\n建议：${e(g.suggestion)}</pre>`).join('')}${h.screens.map(s => `<h4>${e(s.page)} · ${e(s.state)} · ${e(s.mark || '未标记')}</h4><pre class="verbatim">问题：${e(s.problem)}\n建议：${e(s.suggestion)}</pre>`).join('')}`).join('')}</details>` : ''}<details class="prd-document"><summary>查看本轮 PRD 原文</summary><pre>${e(prdText)}</pre></details>${footer}`;

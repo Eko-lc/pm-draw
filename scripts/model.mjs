@@ -28,13 +28,36 @@ const id = (v, label) => assert(typeof v === 'string' && /^[a-z][a-z0-9-]*$/.tes
 export const httpURL = value => { const u = new URL(value); assert(['http:', 'https:'].includes(u.protocol), '产品地址只支持 HTTP(S)'); return u; };
 const date = value => typeof value === 'string' && Number.isFinite(Date.parse(value));
 
-export async function loadManifest(file) {
+// 分组拆分存储：flow.json 的 groups 允许 {id, title, file} 索引条目，指向清单目录内的分组文件（内容为完整分组）。
+// 加载时合并为完整分组，校验 / 渲染 / 指纹始终面对合并后的结构；groupFiles 记录分组编号 → 相对路径，供保存时写回。
+export async function loadRaw(file) {
   const absolute = path.resolve(file);
   const m = JSON.parse(await fs.readFile(absolute, 'utf8'));
+  const dir = path.dirname(absolute), groupFiles = new Map(), seenFiles = new Set();
+  m.groups ||= [];
+  for (const [i, g] of m.groups.entries()) {
+    if (typeof g?.file !== 'string') continue;
+    assert(Object.keys(g).every(k => ['id', 'title', 'file'].includes(k)), `groups[${i}] 索引条目只能包含 id / title / file`);
+    assert(!path.isAbsolute(g.file) && !g.file.split(/[\\/]/).includes('..'), `分组文件必须是清单目录内的相对路径：${g.file}`);
+    assert(!seenFiles.has(g.file), `分组文件被重复引用：${g.file}`); seenFiles.add(g.file);
+    let raw;
+    try { raw = await fs.readFile(path.resolve(dir, g.file), 'utf8'); }
+    catch { assert(false, `找不到分组文件：${g.file}`); }
+    const content = JSON.parse(raw);
+    if (g.id !== undefined) assert(g.id === content.id, `分组索引与文件内容编号不一致：${g.file}`);
+    if (g.title !== undefined) assert(g.title === content.title, `分组索引与文件内容标题不一致：${g.file}`);
+    groupFiles.set(content.id, g.file);
+    m.groups[i] = content;
+  }
+  return { m, dir, file: absolute, groupFiles };
+}
+
+export async function loadManifest(file) {
+  const { m, dir, file: absolute, groupFiles } = await loadRaw(file);
   assert(m.prd && typeof m.prd.path === 'string', '缺少 prd.path');
-  const prdText = await fs.readFile(path.resolve(path.dirname(absolute), m.prd.path), 'utf8');
+  const prdText = await fs.readFile(path.resolve(dir, m.prd.path), 'utf8');
   validate(m, prdText);
-  return { m, dir: path.dirname(absolute), file: absolute, prdText, prdHash: sha(prdText) };
+  return { m, dir, file: absolute, prdText, prdHash: sha(prdText), groupFiles };
 }
 
 export function validate(m, prdText) {
@@ -75,6 +98,16 @@ export function validate(m, prdText) {
       assert(r.screens.length && r.screens.every(s => screenIds.has(s)), `${r.id} 必须关联已有页面状态`);
       string(r.image?.path, '参考截图路径');
       assert(/^[a-f0-9]{64}$/.test(r.image.sha256), '参考截图缺少 sha256');
+      if (r.changes !== undefined) {
+        assert(r.kind === 'existing', `${r.id} 的变更点标记仅用于旧页面截图（existing）；参考图只做页面参考`);
+        array(r.changes, `${r.id}.changes`);
+        for (const c of r.changes) {
+          string(c.original, '变更点原逻辑'); string(c.change, '变更点修改点');
+          if (c.rect) { assert(Array.isArray(c.rect) && c.rect.length === 4 && c.rect.every(n => Number.isFinite(n) && n >= 0 && n <= 100), '变更点 rect 应为四个 0–100 的百分比'); assert(c.rect[2] > 0 && c.rect[3] > 0 && c.rect[0] + c.rect[2] <= 100 && c.rect[1] + c.rect[3] <= 100, '变更点标记超出画面'); }
+          if (c.pin) assert(Array.isArray(c.pin) && c.pin.length === 2 && c.pin.every(n => Number.isFinite(n) && n >= 0 && n <= 100), '变更点 pin 应为两个 0–100 的百分比坐标');
+          assert(c.rect || c.pin, '变更点需要 rect 或 pin 在旧页面截图上定位');
+        }
+      }
     }
   }
   for (const r of reqIds) assert(covered.has(r), `需求 ${r} 没有对应页面状态；请补齐或明确待确认`);
@@ -212,4 +245,18 @@ export async function saveJSON(file, value, exclusive = false) {
   const temporary = `${file}.${process.pid}.tmp`;
   await fs.writeFile(temporary, JSON.stringify(value, null, 2) + '\n');
   await fs.rename(temporary, file);
+}
+
+// 保存清单：拆分组各自写回独立文件（next-round 时随 groupFiles 相对路径写入新轮次目录），
+// 主文件只保留 {id, title, file} 索引；未拆分的内联分组保持内联。
+export async function saveManifest(file, m, groupFiles = new Map(), exclusive = false) {
+  const dir = path.dirname(path.resolve(file));
+  const groups = [];
+  for (const g of m.groups) {
+    const rel = groupFiles.get(g.id);
+    if (!rel) { groups.push(g); continue; }
+    await saveJSON(path.resolve(dir, rel), g);
+    groups.push({ id: g.id, title: g.title, file: rel });
+  }
+  await saveJSON(file, { ...m, groups }, exclusive);
 }

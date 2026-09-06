@@ -14,7 +14,7 @@
 
 默认 PRD 只保留背景目标、功能规则、流程状态、验收和决策项。没有必要的内容省略，已决策记录折叠保留。回答问题不自动批准整份 PRD。
 
-原型按「功能流程 → 页面状态 → 原型与说明」组织：`index.html` 总索引，每个流程组一个 HTML。参考截图集中展示，每屏可追溯相关参考和 PRD；关键组件与画布外的说明悬停联动。方案为低保真页面状态与跳转演示，不执行真实业务。
+原型按「功能流程 → 页面状态 → 原型与说明」组织：`index.html` 总索引，每个流程组一个 HTML。参考截图集中展示，每屏可追溯相关参考和 PRD；明确说明的旧页面截图在图上标注变更点并列出原逻辑与新逻辑，参考图只作页面参考。关键组件与画布外的说明悬停联动。方案为低保真页面状态与跳转演示，不执行真实业务。
 
 线框分 PC 和移动端两种样式：按各自画布定位导航、内容和操作区，两端分别设计；预览只整体缩放，不自动改变画布内部位置。可设置准确视口尺寸、PC 侧栏宽度以及固定顶部／底部区。画布内只放产品内容；尺寸、状态、编号、交互说明与反馈置于画布外。
 
@@ -44,11 +44,16 @@ node scripts/pm-draw.mjs add-group designs/product/flow.json --file group-a.json
 node scripts/pm-draw.mjs validate designs/product/flow.json
 node scripts/pm-draw.mjs build designs/product/flow.json --out designs/product/site
 
+# 用专用 CDP Chrome 打开页面，同时启动页面反馈保存服务
+node scripts/pm-draw.mjs view designs/product/site
+
 # 有匹配本轮 HTML 的反馈 JSON、需要保留完整历史时，在修改 PRD / flow 前执行
-node scripts/pm-draw.mjs next-round designs/product/flow.json --feedback feedback.json --out designs/product/round-2/flow.json
+node scripts/pm-draw.mjs next-round designs/product/flow.json --feedback designs/product/site/product-round-1-feedback.json --out designs/product/round-2/flow.json
 ```
 
-小清单可直接写完整 JSON；大清单逐组追加。截图研究方法见 [browser-capture](references/browser-capture.md)，原型表达规范见 [wireframe-guide](references/wireframe-guide.md)。旧版 review 与截图 CLI 保留兼容，日常设计使用 prototype，无需调用走查命令。
+浏览器命令默认启动或复用 `127.0.0.1:9223` 的专用 CDP Chrome，数据目录与日常 Chrome 隔离；多个 Agent 任务复用该专用 Profile 的登录态与 Cookie。只有显式传 `--browser` 时才连接日常浏览器。
+
+页面输入自动暂存在浏览器。用户点击“保存反馈”后，本机保存服务校验页面版本并将完整 JSON 原子写入 HTML 所在目录，文件名为 `<projectId>-round-<轮次>-feedback.json`；保存动作由页面完成，不依赖 Agent 读取 textarea。小清单可直接写完整 JSON；大清单逐组追加，每组存为 `groups/<id>.json` 独立文件，flow.json 只保留索引，局部修改某组只需读写对应文件。截图研究方法见 [browser-capture](references/browser-capture.md)，原型表达规范见 [wireframe-guide](references/wireframe-guide.md)。旧版 review 与截图 CLI 保留兼容，日常设计使用 prototype，无需调用走查命令。
 
 修改脚本后运行 `npm test`；涉及渲染／交互时，实际打开生成的索引和分组页检查相关布局、跳转、截图展开与反馈保存／导出。资源支持 `node assets/inject-assets.mjs <HTML或目录>` 刷新；业务内容变更从 flow 重建。
 

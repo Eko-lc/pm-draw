@@ -2,6 +2,8 @@
 
 路径相对 flow.json 所在目录。Agent 理解 PRD 后写清单，脚本只校验引用、结构与跳转，不能证明语义无遗漏。`build` 生成 `index.html` 和每组一个 `<group.id>.html`，组内屏幕平铺，跨组跳转为相对链接。
 
+清单可整体单文件存放，也可按组拆分：flow.json 的 `groups` 只保留 `{id, title, file}` 索引，每组完整内容存为 `groups/<id>.json`。拆封对校验、渲染与反馈指纹透明；修改某组功能时只读写该组文件与索引，不必加载整个清单。
+
 ## 顶层
 
 | 字段 | 说明 |
@@ -12,7 +14,7 @@
 | mode / target | 日常设计固定 `prototype` / `{kind: "none"}`；参考截图也用此模式 |
 | prd.path | 本轮 PRD 路径；文首状态由 validate 报告并显示在 HTML，草稿会提示仅供讨论 |
 | requirements | `{id, text, quote}` 数组；quote 是 PRD 中存在的连续原文，text 不扩展含义 |
-| groups | 按用户阅读顺序排列的 `{id, title, description?, screens}` 数组 |
+| groups | 按用户阅读顺序排列。小清单直接内联 `{id, title, description?, screens}`；大清单用索引条目 `{id, title, file}` 指向 `groups/<id>.json`（内容为完整分组），两种形式可混用 |
 | references | 可选截图参考数组，格式见下文；不属于产品需求 |
 | history / baseline | next-round 管理，保留历史原话，不手工伪造 |
 
@@ -84,7 +86,12 @@
 
 这是格式示例，地址、时间和图片必须替换为实际证据。kind 为 competitor（竞品）或 existing（旧页面）。source 记录直接页面、官方文档或用户上传等来源；url 是实际来源页面，竞品必填，用户上传无地址时可省略。capturedAt 记录实际采集／接入时间，原拍摄时间未知则在 source 说明，不编造。screens 必须关联现有页面状态；image 用本地 PNG / JPEG / WebP 与实际 SHA256（可用 `shasum -a 256 <图片路径>`）。
 
-build 验证图片摘要并内嵌图片。索引集中显示观察、应用与关联页面，截图及来源按需展开；分组页链接到相应参考。有效参考跨轮复用，next-round 调整相对路径，不清空参考截图。不用屏幕级 screenshot 字段接入这些参考。
+按用户说明区分两种接入方式：
+
+- **明确说明是旧页面截图**：kind 用 `existing`，并用可选 `changes` 在截图上标记变更点、补充更新逻辑。每条 `{rect 或 pin, original, change}`：rect 为 `[左, 上, 宽, 高]`、pin 为 `[x, y]`，均为 0–100 百分比（同屏幕 annotations 的坐标约定）；original 写旧逻辑并注明观察或用户描述来源，change 写新逻辑修改点。逐组件的更新逻辑仍用屏幕 `annotations` 与 `logic` / `dataFlow` 补充。
+- **明确说明是参考图**：kind 用 `competitor`，只写观察与借鉴点，作为页面参考，不使用 `changes`。
+
+build 验证图片摘要并内嵌图片。索引集中显示观察、应用与关联页面；参考图截图及来源按需展开，带 changes 的旧页面截图直接展示并叠加编号变更点，图下列出原逻辑与修改点；分组页链接到相应参考。有效参考跨轮复用，next-round 调整相对路径，不清空参考截图。不用屏幕级 screenshot 字段接入这些参考。
 
 ## 大清单分块
 
@@ -98,9 +105,11 @@ node <SKILL>/scripts/pm-draw.mjs build designs/product/flow.json --out designs/p
 
 `--prd` 相对 flow 所在目录。先加入需求再逐组追加，最后统一校验覆盖与跨组跳转；参考数组直接写入 flow。片段只是临时素材，无需交付。
 
+`add-group` 会把每组写入 `groups/<id>.json`，flow.json 只保留 `{id, title, file}` 索引；已有的整体清单可用 `split <flow.json>` 一次性拆分。后续修改某组功能时，从 flow.json 索引定位分组文件，只读写该文件即可；改了组标题要同步索引条目。validate / build 自动合并读取，next-round 会把分组文件一并复制到新轮次目录，无需手工拼装。
+
 ## 反馈与历史
 
-HTML 按 project id + round 保存本地反馈；fingerprint 绑定 PRD、清单、参考与历史，同轮内容不匹配或多窗口冲突时暂停静默覆盖并提示导出。保存失败会提示，不能承诺跨浏览器同步。
+HTML 按 project id + round 暂存本地反馈；fingerprint 绑定 PRD、清单、参考与历史，同轮内容不匹配或多窗口冲突时暂停静默覆盖并提示导出。`view <site目录或HTML>` 用专用 CDP Chrome 打开页面并启动本机保存服务；用户点击“保存反馈”后，完整 JSON 原子写入 HTML 所在目录。保存失败会在页面提示。
 
 导出 JSON 含 `schemaVersion: 1`、`kind: pm-draw-feedback`、`projectId`、`round`、`fingerprint`、`screens`、`groups`、`history`。每屏含 id、page、state、groupId、contentHash、mark、problem、suggestion；mark 为“符合预期”“需要调整”“严重问题”或空字符串。问题与建议原文保留。每组含 problem / suggestion；任意页面导出全部分组反馈。
 

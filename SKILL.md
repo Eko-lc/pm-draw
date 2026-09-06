@@ -33,15 +33,15 @@ description: 根据粗需求编写和迭代精简功能 PRD，提出带选项的
 先读完整 PRD，确认当前版本的审查状态。默认依据「已审查通过」版本绘制；用户明确要求草稿预览时按草稿处理。
 
 1. **研究参考**：读取 [references/browser-capture.md](references/browser-capture.md)，选择与本次关键交互相关的少量竞品页面，实际查看截图，记录来源、观察和具体借鉴点。通常 1–3 个产品即可，不写泛泛竞品报告。已有相关证据可复用，仅在过时或范围变化时补充。
-2. **组织方案**：读取 [references/wireframe-guide.md](references/wireframe-guide.md) 和 [references/flow-format.md](references/flow-format.md)。按用户路径提取需求原文和页面状态，创建 `mode: prototype`、`target.kind: none` 的 `flow.json`。旧页面与竞品截图写入可选 `references`，不启用 review 模式。
+2. **组织方案**：读取 [references/wireframe-guide.md](references/wireframe-guide.md) 和 [references/flow-format.md](references/flow-format.md)。按用户路径提取需求原文和页面状态，创建 `mode: prototype`、`target.kind: none` 的 `flow.json`。旧页面与竞品截图写入可选 `references`，不启用 review 模式。用户明确说明是旧页面截图时用 `existing`，在截图上标记变更点并补充更新逻辑；明确说明是参考图时用 `competitor`，放入页面参考。
 3. **绘制与说明**：每屏标明 `device` 和画布尺寸，按终端绘制低保真原型，写清关键组件行为、数据从哪里来／如何更新／影响哪里、用户操作与自动状态流转、正向与相关异常路径。未决分支关联 PRD 的 Q 编号，不擅自补成规则。只有交互或布局明显不同的状态单独画屏，其余在说明中交代。
-4. **生成**：运行 `node <SKILL>/scripts/pm-draw.mjs validate <flow.json>`，再 `build <flow.json> --out <site目录>`。产物为 `index.html` 总索引和每个流程组一个 `<group-id>.html`，不逐屏拆文件。参考截图在索引集中展示，每屏链接到相关参考。
+4. **生成**：运行 `node <SKILL>/scripts/pm-draw.mjs validate <flow.json>`，再 `build <flow.json> --out <site目录>`，最后运行 `view <site目录>`，用专用 CDP Chrome 打开页面并启动反馈保存服务。产物为 `index.html` 总索引和每个流程组一个 `<group-id>.html`，不逐屏拆文件。参考截图在索引集中展示，每屏链接到相关参考。
 
-小清单直接写 JSON。清单较大时用 `init` → `add-requirements` → 逐个 `add-group` 分块组装，最后统一校验；命令见 flow-format。参考截图采集受阻时说明具体缺口并继续独立工作，不用线框冒充竞品截图，也不声称调研已完成。
+小清单直接写 JSON。清单较大时用 `init` → `add-requirements` → 逐个 `add-group` 分块组装（每组写入 `groups/<id>.json`，flow.json 只保留索引），最后统一校验；已有整体清单可用 `split` 拆分。按反馈修改某组功能时，从索引定位后只读写对应分组文件，不必加载整个清单；命令见 flow-format。参考截图采集受阻时说明具体缺口并继续独立工作，不用线框冒充竞品截图，也不声称调研已完成。
 
 ### 根据反馈修改
 
-接收 HTML 导出的 JSON / Markdown、用户粘贴的反馈或对话指示。沿用页面 id 与 Q 编号定位，只处理相关范围：
+接收 HTML 保存的 JSON / Markdown、用户粘贴的反馈或对话指示。页面中的问题和建议由用户点击“保存反馈”后直接写入网页目录；Agent 不代替用户执行保存，也不从页面正文猜测 textarea 内容。读取网页目录中的 `<projectId>-round-<轮次>-feedback.json`，沿用页面 id 与 Q 编号定位，只处理相关范围：
 
 - **表达修改**：调整层级、布局、文案表达或交互说明；业务含义不变则直接改 flow 并重建。
 - **回答决策**：将用户选择写回 PRD 正文与决策记录，再按审查状态同步原型。回答问题不会自动批准整份文档；若答案改变已通过的业务规则，按业务变化回退状态。
@@ -60,4 +60,4 @@ node <SKILL>/scripts/pm-draw.mjs next-round <flow.json> --feedback <feedback.jso
 
 ## 交付
 
-按 [references/review-checklist.md](references/review-checklist.md) 检查本次实际改动，这只是产物自检。交付已生成文件链接、简短修改说明和仍需用户选择的问题。HTML 保留每屏标记、问题、建议及分组反馈，可在当前浏览器保存并导出 JSON / Markdown；提醒需要跨会话使用时导出即可，不要求用户完成额外走查。
+按 [references/review-checklist.md](references/review-checklist.md) 检查本次实际改动，这只是产物自检。交付已生成文件链接、简短修改说明和仍需用户选择的问题。HTML 保留每屏标记、问题、建议及分组反馈；点击页面“保存反馈”写入网页目录，也可下载 JSON / Markdown。不要求用户完成额外走查。

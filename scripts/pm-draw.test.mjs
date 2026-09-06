@@ -3,8 +3,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { validate, readImage, prdStatus } from './model.mjs';
+import { pathToFileURL } from 'node:url';
+import { validate, readImage, prdStatus, loadManifest, feedbackFingerprint } from './model.mjs';
 import { main } from './pm-draw.mjs';
+import { saveFeedbackPayload } from './feedback-server.mjs';
 
 const prdText = ['# 测试产品 PRD', '', '列表页显示资料列表。', '', '用户可以点击新建进入新建页。', '', '新建页含标题输入框。', ''].join('\n');
 
@@ -183,6 +185,29 @@ test('多页面拆分：index 总索引、分组子页面、跨组跳转链接',
   assert.equal(model.page, 'archive', '页面标记所属分组');
 });
 
+test('页面“保存反馈”将问题和建议 JSON 写入网页目录', async () => {
+  const files = await buildToFiles(makeFlow());
+  assert.match(files['main.html'], /<script id="pm-feedback" type="application\/json">{}<\/script>/, '页面提供稳定 JSON 节点');
+  assert.match(files['main.html'], /id="save-json" class="primary">保存反馈/, '页面提供保存按钮');
+  assert.match(files['main.html'], /fetch\('http:\/\/127\.0\.0\.1:9224\/feedback'/, '保存按钮调用本机保存服务');
+
+  const site = await fs.mkdtemp(path.join(os.tmpdir(), 'pm-draw-feedback-site-'));
+  const index = path.join(site, 'index.html'), group = path.join(site, 'main.html');
+  await fs.writeFile(index, files['index.html']); await fs.writeFile(group, files['main.html']);
+  const model = JSON.parse(files['main.html'].match(/<script id="pm-data" type="application\/json">(.*?)<\/script>/s)[1]);
+  const report = {
+    schemaVersion: 1, kind: 'pm-draw-feedback', projectId: model.projectId, projectTitle: model.projectTitle,
+    round: model.round, fingerprint: model.fingerprint, updatedAt: '2026-09-06T02:00:00.000Z', exportedAt: '2026-09-06T02:00:00.000Z',
+    screens: model.screens.map((screen, index) => ({ ...screen, mark: '', problem: index ? '' : '页面反馈原话', suggestion: index ? '' : '保留建议原话' })),
+    groups: model.groups.map(group => ({ ...group, problem: '', suggestion: '' })), history: [],
+  };
+  const saved = await saveFeedbackPayload({ pageUrl: pathToFileURL(group).href, feedback: report });
+  assert.equal(saved.output, path.join(site, 'demo-round-1-feedback.json'));
+  const stored = JSON.parse(await fs.readFile(saved.output, 'utf8'));
+  assert.equal(stored.screens[0].problem, '页面反馈原话');
+  assert.equal(stored.screens[0].suggestion, '保留建议原话');
+});
+
 test('review 渲染：截图红色编号、圆点与箭头覆盖层，标注列表联动', async () => {
   const flow = makeFlow();
   flow.mode = 'review'; flow.target = { kind: 'manual' };
@@ -230,10 +255,13 @@ test('增量构建（大 PRD 分块）：init → add-requirements → add-group
   await main(['validate', flowFile]);
   const saved = JSON.parse(await fs.readFile(flowFile, 'utf8'));
   assert.equal(saved.requirements.length, 3);
-  assert.equal(saved.groups.length, 1);
-  const files = await buildToFiles(saved);
-  assert.match(files['index.html'], /演示产品/);
-  assert.match(files['main.html'], /状态：有数据/);
+  assert.deepEqual(saved.groups, [{ id: 'main', title: '资料管理', file: 'groups/main.json' }], 'flow.json 只保留分组索引');
+  const groupOnDisk = JSON.parse(await fs.readFile(path.join(dir, 'groups', 'main.json'), 'utf8'));
+  assert.equal(groupOnDisk.screens.length, 2, '分组完整内容在独立文件中');
+  const out = path.join(dir, 'site');
+  await main(['build', flowFile, '--out', out]);
+  assert.match(await fs.readFile(path.join(out, 'index.html'), 'utf8'), /演示产品/);
+  assert.match(await fs.readFile(path.join(out, 'main.html'), 'utf8'), /状态：有数据/);
 });
 
 test('增量校验：错误 quote、重复需求、未知需求引用、重复分组编号被拒绝', async () => {
@@ -259,6 +287,92 @@ test('增量校验：错误 quote、重复需求、未知需求引用、重复�
   await main(['add-requirements', flowFile, '--file', allReq]);
   await main(['add-group', flowFile, '--file', badGroup]);
   await assert.rejects(() => main(['add-group', flowFile, '--file', badGroup]), /流程编号重复/);
+});
+
+function addArchiveGroup(flow) {
+  flow.groups.push({ id: 'archive', title: '归档管理', screens: [
+    { id: 'archive-list', page: '归档列表', state: '默认', requirements: ['r-list'], reproduce: ['进入归档'], pending: [], actions: [], blocks: [{ id: 'title', type: 'heading', text: '归档', requirement: 'r-list' }] },
+  ] });
+  return flow;
+}
+
+test('split 拆分内联分组：索引、指纹不变、按组局部修改生效', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'pm-draw-split-'));
+  await fs.writeFile(path.join(dir, 'PRD.md'), prdText);
+  const flowFile = path.join(dir, 'flow.json');
+  await fs.writeFile(flowFile, JSON.stringify(addArchiveGroup(makeFlow()), null, 2));
+  const inline = await loadManifest(flowFile), fpInline = feedbackFingerprint(inline.m, inline.prdHash);
+  await main(['split', flowFile]);
+  await assert.rejects(() => main(['split', flowFile]), /无需拆分/, '重复拆分直接提示');
+  const saved = JSON.parse(await fs.readFile(flowFile, 'utf8'));
+  assert.deepEqual(saved.groups.map(g => g.file), ['groups/main.json', 'groups/archive.json'], 'flow.json 只留索引');
+  assert.equal(JSON.parse(await fs.readFile(path.join(dir, 'groups', 'archive.json'), 'utf8')).screens[0].id, 'archive-list');
+  const splitCtx = await loadManifest(flowFile);
+  assert.equal(feedbackFingerprint(splitCtx.m, splitCtx.prdHash), fpInline, '拆分不改变反馈指纹');
+  const out = path.join(dir, 'site');
+  await main(['build', flowFile, '--out', out]);
+  assert.match(await fs.readFile(path.join(out, 'archive.html'), 'utf8'), /归档列表/);
+  // 模拟 AI 只修改某一组：只读写对应分组文件
+  const groupFile = path.join(dir, 'groups', 'main.json');
+  const mainGroup = JSON.parse(await fs.readFile(groupFile, 'utf8'));
+  mainGroup.screens[0].summary = '只改这一组';
+  await fs.writeFile(groupFile, JSON.stringify(mainGroup, null, 2));
+  await main(['validate', flowFile]);
+  await main(['build', flowFile, '--out', out]);
+  assert.match(await fs.readFile(path.join(out, 'main.html'), 'utf8'), /只改这一组/);
+});
+
+test('拆分存储混用与索引一致性校验', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'pm-draw-split-mix-'));
+  await fs.writeFile(path.join(dir, 'PRD.md'), prdText);
+  const flowFile = path.join(dir, 'flow.json');
+  await fs.writeFile(flowFile, JSON.stringify(addArchiveGroup(makeFlow())));
+  await main(['split', flowFile]);
+  // 混合形式：一组内联、一组索引，仍可校验
+  const saved = JSON.parse(await fs.readFile(flowFile, 'utf8'));
+  saved.groups[1] = JSON.parse(await fs.readFile(path.join(dir, 'groups', 'archive.json'), 'utf8'));
+  await fs.writeFile(flowFile, JSON.stringify(saved, null, 2));
+  await main(['validate', flowFile]);
+  // 索引与文件内容不一致被拒绝
+  const badTitle = JSON.parse(await fs.readFile(flowFile, 'utf8'));
+  badTitle.groups[0] = { id: 'main', title: '错误的标题', file: 'groups/main.json' };
+  await fs.writeFile(flowFile, JSON.stringify(badTitle, null, 2));
+  await assert.rejects(() => main(['validate', flowFile]), /标题不一致/);
+  const badId = JSON.parse(await fs.readFile(flowFile, 'utf8'));
+  badId.groups[0] = { id: 'other', file: 'groups/main.json' };
+  await fs.writeFile(flowFile, JSON.stringify(badId, null, 2));
+  await assert.rejects(() => main(['validate', flowFile]), /编号不一致/);
+  // 缺失分组文件与越界路径被拒绝
+  const missing = JSON.parse(await fs.readFile(flowFile, 'utf8'));
+  missing.groups[0] = { id: 'main', title: '资料管理', file: 'groups/missing.json' };
+  await fs.writeFile(flowFile, JSON.stringify(missing, null, 2));
+  await assert.rejects(() => main(['validate', flowFile]), /找不到分组文件/);
+  const escape = JSON.parse(await fs.readFile(flowFile, 'utf8'));
+  escape.groups[0] = { id: 'main', title: '资料管理', file: '../outside.json' };
+  await fs.writeFile(flowFile, JSON.stringify(escape, null, 2));
+  await assert.rejects(() => main(['validate', flowFile]), /相对路径/);
+});
+
+test('next-round 保留分组拆分：新轮次目录自含分组文件，可直接构建', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'pm-draw-split-round-'));
+  await fs.writeFile(path.join(dir, 'PRD.md'), prdText);
+  const flowFile = path.join(dir, 'flow.json');
+  await fs.writeFile(flowFile, JSON.stringify(makeFlow(), null, 2));
+  await main(['split', flowFile]);
+  const out = path.join(dir, 'site');
+  await main(['build', flowFile, '--out', out]);
+  const index = await fs.readFile(path.join(out, 'index.html'), 'utf8');
+  const model = JSON.parse(index.match(/<script id="pm-data" type="application\/json">(.*?)<\/script>/s)[1]);
+  const report = { schemaVersion: 1, kind: 'pm-draw-feedback', projectId: model.projectId, round: model.round, fingerprint: model.fingerprint, screens: model.screens.map(s => ({ ...s, mark: '', problem: '', suggestion: '' })), groups: model.groups.map(g => ({ ...g, problem: '', suggestion: '' })), history: [] };
+  const feedbackFile = path.join(dir, 'feedback.json');
+  await fs.writeFile(feedbackFile, JSON.stringify(report));
+  const nextFile = path.join(dir, 'round-2', 'flow.json');
+  await main(['next-round', flowFile, '--feedback', feedbackFile, '--out', nextFile]);
+  const next = JSON.parse(await fs.readFile(nextFile, 'utf8'));
+  assert.deepEqual(next.groups, [{ id: 'main', title: '资料管理', file: 'groups/main.json' }], '新轮次仍是索引');
+  const copied = JSON.parse(await fs.readFile(path.join(dir, 'round-2', 'groups', 'main.json'), 'utf8'));
+  assert.equal(copied.screens.length, 2, '分组文件随轮次复制');
+  await main(['build', nextFile, '--out', path.join(dir, 'round-2', 'site')]);
 });
 
 test('原型参考离线展示、来源转义、版本绑定与跨轮复用', async () => {
@@ -328,6 +442,38 @@ test('参考必须关联现有页面且来源可用；无数据流与操作时�
   const article = files['main.html'].split('<article class="screen" id="screen-create-form">')[1].split('</article>')[0];
   assert.doesNotMatch(article, /<h4>数据流向|<h4>可执行操作|本状态无可执行操作/);
   assert.doesNotMatch(files['index.html'], /<section class="design-references">/);
+});
+
+test('旧页面截图在图上标记变更点并展示更新逻辑；参考图不标变更点', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'pm-draw-existing-'));
+  const image = path.join(dir, 'old.png');
+  await fs.writeFile(image, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64'));
+  const { hash } = await readImage(image);
+  const ref = { id: 'ref-old-list', kind: 'existing', title: '旧资料列表', source: '用户上传截图', capturedAt: '2026-09-06T08:00:00Z', observed: '旧列表逐个归档，无状态筛选', application: '在截图上标记与批量归档相关的变更', screens: ['list'], image: { path: 'old.png', sha256: hash }, changes: [{ rect: [10, 20, 30, 8], original: '旧逻辑：逐个归档（用户描述）', change: '新逻辑：支持批量归档' }, { pin: [50, 60], original: '旧逻辑：无筛选', change: '新逻辑：增加状态筛选' }] };
+  const flow = makeFlow();
+  flow.references = [ref];
+  await fs.writeFile(path.join(dir, 'PRD.md'), prdText);
+  const flowFile = path.join(dir, 'flow.json');
+  await fs.writeFile(flowFile, JSON.stringify(flow));
+  await main(['build', flowFile, '--out', path.join(dir, 'site')]);
+  const index = await fs.readFile(path.join(dir, 'site', 'index.html'), 'utf8');
+  assert.match(index, /变更点与更新逻辑/);
+  assert.match(index, /class="shot-pin" data-comp="ref-ref-old-list-1"/);
+  assert.match(index, /class="shot-dot" data-comp="ref-ref-old-list-2"/);
+  assert.match(index, /data-target="ref-ref-old-list-1"/);
+  assert.match(index, /旧逻辑：逐个归档（用户描述）/);
+  const card = index.split('id="reference-ref-old-list"')[1].split('</article>')[0];
+  assert.doesNotMatch(card, /<details>/, '带变更点的旧页面截图直接展示，不折叠');
+
+  const competitor = { ...ref, id: 'ref-form', kind: 'competitor', url: 'https://example.com/form', screens: ['create-form'] };
+  const bad1 = makeFlow(); bad1.references = [competitor];
+  assert.throws(() => validate(bad1, prdText), /existing/);
+  const bad2 = makeFlow(); bad2.references = [{ ...ref, changes: [{ pin: [10, 10], original: '', change: 'c' }] }];
+  assert.throws(() => validate(bad2, prdText), /原逻辑/);
+  const bad3 = makeFlow(); bad3.references = [{ ...ref, changes: [{ original: 'o', change: 'c' }] }];
+  assert.throws(() => validate(bad3, prdText), /定位/);
+  const bad4 = makeFlow(); bad4.references = [{ ...ref, changes: [{ rect: [90, 90, 20, 20], original: 'o', change: 'c' }] }];
+  assert.throws(() => validate(bad4, prdText), /超出画面/);
 });
 
 test('PC 与移动端独立画布、区域定位；设计旁注不进入产品画面', async () => {

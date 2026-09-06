@@ -1,5 +1,6 @@
 // web-access 浏览器发现 + HTTP Proxy 协议；内置 CDP 路径无需安装其他 Skill。
-import { selectBrowser, findFallbackPort } from './browser-discovery.mjs';
+import { selectBrowser } from './browser-discovery.mjs';
+import { ensureDedicatedChrome } from './dedicated-chrome.mjs';
 import { assert } from './model.mjs';
 
 function localEndpoint(value, protocols) {
@@ -38,6 +39,8 @@ async function websocketURL(options) {
     const version = await (await fetchTimed(new URL('/json/version', u))).json();
     return localEndpoint(version.webSocketDebuggerUrl, ['ws:']).href;
   }
+  // 默认路径固定使用独立 user-data-dir 的 CDP Chrome；只有显式 --browser 才连接日常浏览器。
+  if (!options.browser) return websocketURL({ cdp: await ensureDedicatedChrome() });
   const selected = await selectBrowser(options.browser || null);
   if (selected.kind === 'ok') {
     const b = selected.browser;
@@ -46,9 +49,7 @@ async function websocketURL(options) {
   }
   if (selected.kind === 'mismatch') throw new Error(`指定浏览器 ${options.browser || selected.configured} 未开启远程调试，不能切换到其他浏览器。可改用手动截图。`);
   if (selected.kind === 'ambiguous') throw new Error(`请用 --browser 指定本次浏览器：${selected.detected.map(b => b.id).join(', ')}，或提供 --cdp / --proxy。`);
-  const port = await findFallbackPort();
-  if (port) return websocketURL({ cdp: `http://127.0.0.1:${port}` });
-  throw new Error('没有可连接的浏览器。开启 Chrome/Edge 远程调试后重试，或使用 import-shot 手动导入截图。');
+  throw new Error('指定浏览器未提供可连接的远程调试端点；可省略 --browser 使用专用 CDP Chrome。');
 }
 
 export async function connectBrowser(options = {}) {

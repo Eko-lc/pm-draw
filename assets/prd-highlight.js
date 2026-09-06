@@ -24,7 +24,7 @@
       fit();
       new ResizeObserver(fit).observe(host);
     });
-    document.querySelectorAll('.proto-with-spec').forEach(function(scope) {
+    document.querySelectorAll('.proto-with-spec, .reference-card').forEach(function(scope) {
       function decorateCard(target, on) {
         var card = target.closest && target.closest('.channel-card');
         if (!card) return;

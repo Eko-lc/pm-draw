@@ -4,8 +4,11 @@
   const model = JSON.parse(document.getElementById('pm-data').textContent);
   const key = `pm-draw:v1:${model.projectId}:round-${model.round}`;
   const status = document.getElementById('save-status');
+  const feedbackNode = document.getElementById('pm-feedback') || (() => {
+    const node = document.createElement('script'); node.id = 'pm-feedback'; node.type = 'application/json'; document.body.appendChild(node); return node;
+  })();
   let storageConflict = false;
-  const current = { schemaVersion: 1, kind: 'pm-draw-feedback', projectId: model.projectId, projectTitle: model.projectTitle, round: model.round, fingerprint: model.fingerprint, exportedAt: null, screens: model.screens.map(s => ({ ...s, mark: '', problem: '', suggestion: '' })), groups: model.groups.map(g => ({ ...g, problem: '', suggestion: '' })) };
+  const current = { schemaVersion: 1, kind: 'pm-draw-feedback', projectId: model.projectId, projectTitle: model.projectTitle, round: model.round, fingerprint: model.fingerprint, updatedAt: null, exportedAt: null, screens: model.screens.map(s => ({ ...s, mark: '', problem: '', suggestion: '' })), groups: model.groups.map(g => ({ ...g, problem: '', suggestion: '' })) };
   const notice = (text, error = false) => { status.textContent = text; status.dataset.error = String(error); };
   function valid(value) {
     return value?.kind === current.kind && value.schemaVersion === 1 && value.projectId === current.projectId && value.round === current.round && value.fingerprint === current.fingerprint &&
@@ -13,6 +16,7 @@
       Array.isArray(value.groups) && value.groups.length === current.groups.length && new Set(value.groups.map(g => g.id)).size === current.groups.length && value.groups.every(g => current.groups.some(x => x.id === g.id) && typeof g.problem === 'string' && typeof g.suggestion === 'string');
   }
   function apply(value) {
+    current.updatedAt = typeof value.updatedAt === 'string' ? value.updatedAt : null;
     for (const type of ['screens', 'groups']) for (const record of current[type]) {
       const incoming = value[type].find(x => x.id === record.id);
       record.problem = incoming.problem; record.suggestion = incoming.suggestion;
@@ -20,9 +24,17 @@
     }
   }
   function exportData() { return { ...current, exportedAt: new Date().toISOString(), history: model.history }; }
+  function publish() {
+    const value = exportData();
+    feedbackNode.textContent = JSON.stringify(value);
+    window.pmDrawFeedback = value;
+    return value;
+  }
   function save() {
+    current.updatedAt = new Date().toISOString();
+    const value = publish();
     if (storageConflict) return notice('检测到同轮其他版本的反馈，已保留原数据。请导出当前 JSON，再用新轮次继续。', true);
-    try { localStorage.setItem(key, JSON.stringify(exportData())); notice('反馈已自动保存在此浏览器 · ' + new Date().toLocaleTimeString()); }
+    try { localStorage.setItem(key, JSON.stringify(value)); notice('反馈已自动保存在此浏览器 · ' + new Date().toLocaleTimeString()); }
     catch { notice('本地保存失败（可能空间不足或浏览器禁用存储）。请立即导出 JSON 备份。', true); }
   }
   function sync() {
@@ -41,6 +53,7 @@
     else { localStorage.setItem(key, JSON.stringify(exportData())); notice('自动保存已就绪 · 仅保存在此浏览器，请及时导出备份'); }
   } catch { storageConflict = true; notice('本地存储不可用或数据损坏，未覆盖原数据。当前反馈请使用 JSON 导出保存。', true); }
   sync();
+  publish();
   for (const area of document.querySelectorAll('[data-feedback]')) {
     const record = (area.dataset.kind === 'group' ? current.groups : current.screens).find(x => x.id === area.dataset.feedback);
     area.addEventListener('input', event => { if (!event.target.matches('textarea[data-field]')) return; record[event.target.dataset.field] = event.target.value; save(); });
@@ -63,7 +76,22 @@
     }
     return lines.join('\n');
   }
-  document.getElementById('export-json').addEventListener('click', () => download(`${model.projectId}-round-${model.round}-feedback.json`, JSON.stringify(exportData(), null, 2), 'application/json;charset=utf-8'));
+  document.getElementById('save-json').addEventListener('click', async event => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    try {
+      const response = await fetch('http://127.0.0.1:9224/feedback', {
+        method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({ pageUrl: location.href, feedback: publish() }),
+      });
+      const result = await response.json();
+      if (!response.ok || !result.ok) throw new Error(result.error || `HTTP ${response.status}`);
+      notice(`已保存到网页文件夹：${result.fileName}`);
+    } catch (error) {
+      notice(`保存到网页文件夹失败：${error.message}。请用项目的 view 命令打开页面后重试。`, true);
+    } finally { button.disabled = false; }
+  });
+  document.getElementById('export-json').addEventListener('click', () => download(`${model.projectId}-round-${model.round}-feedback.json`, JSON.stringify(publish(), null, 2), 'application/json;charset=utf-8'));
   document.getElementById('export-md').addEventListener('click', () => download(`${model.projectId}-round-${model.round}-feedback.md`, [`# ${model.projectTitle} · 方案反馈`, '', markdownReport(current), ...(model.history.length ? ['# 历史反馈原话（只读）', ...model.history.map(markdownReport)] : [])].join('\n\n'), 'text/markdown;charset=utf-8'));
   document.getElementById('import-json').addEventListener('click', () => document.getElementById('import-file').click());
   document.getElementById('import-file').addEventListener('change', async event => {
