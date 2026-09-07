@@ -513,3 +513,14 @@ test('拒绝无效终端、画布尺寸、冲突栏宽和嵌套固定区域', ()
     const flow = makeFlow(); edit(flow.groups[0].screens[0]); assert.throws(() => validate(flow, prdText));
   }
 });
+
+test('精确定位布局拒绝混排、嵌套坐标和非法尺寸，并保持旧流式布局兼容',async()=>{
+ const f=makeFlow(),s=f.groups[0].screens[0];s.blocks.forEach((b,i)=>{b.box=[40,40+i*50,200,40];});
+ assert.doesNotThrow(()=>validate(f,prdText));
+ const files=await buildToFiles(f);assert.ok(files['main.html'].includes('left:40px;top:90px;width:200px;height:40px;'));
+ delete s.blocks[0].box;assert.throws(()=>validate(f,prdText),/所有顶层/);
+ s.blocks[0].box=[40,40,-1,40];assert.throws(()=>validate(f,prdText),/box/);
+ s.blocks[0].box=[40,40,200,40];s.blocks[0].region='header';assert.throws(()=>validate(f,prdText),/box/);
+ delete s.blocks[0].region;s.blocks.push({id:'nested',type:'section',requirement:'r-list',box:[300,50,200,100],children:[{id:'child',type:'text',text:'nested',requirement:'r-list',box:[0,0,30,30]}]});assert.throws(()=>validate(f,prdText),/顶层/);
+ assert.doesNotThrow(()=>validate(makeFlow(),prdText));
+});

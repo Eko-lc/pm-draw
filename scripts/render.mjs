@@ -24,7 +24,7 @@ const marker = name => `<!-- @pm-draw:${name}:start --><!-- @pm-draw:${name}:end
 
 function renderBlocks(blocks, s, resolve) {
   return blocks.map(b => {
-    const attr = `data-comp="${e(b.id)}" style="${b.align ? `text-align:${e(b.align)};` : ''}${b.weight ? `flex-grow:${b.weight};` : ''}${b.width ? `width:${b.width}px;flex:0 0 ${b.width}px;` : ''}"`;
+    const attr = `data-comp="${e(b.id)}"${b.box ? ' data-positioned="true"' : ''} style="${b.box ? `position:absolute;left:${b.box[0]}px;top:${b.box[1]}px;width:${b.box[2]}px;height:${b.box[3]}px;` : ''}${b.align ? `text-align:${e(b.align)};` : ''}${b.weight ? `flex-grow:${b.weight};` : ''}${b.width ? `width:${b.width}px;flex:0 0 ${b.width}px;` : ''}"`;
     switch (b.type) {
       case 'heading': return `<div class="wf-heading wf-h${b.level || 1}" ${attr}>${e(b.text)}</div>`;
       case 'text': return `<p class="wf-text" ${attr}>${e(b.text)}</p>`;
@@ -90,13 +90,13 @@ export async function render(context) {
     const frame = frameOf(s), device = s.device || 'desktop', deviceLabel = device === 'mobile' ? '移动端' : 'PC 端';
     const noteEntries = [];
     (function collect(bs) { for (const b of bs) { if (b.note) noteEntries.push(b); if (b.children) collect(b.children); } })(s.blocks);
-    const regions = ['header', 'body', 'footer'].map(region => {
+    const regions = s.blocks.some(b => b.box) ? `<div class="wf-spatial">${renderBlocks(s.blocks, s, link)}</div>` : ['header', 'body', 'footer'].map(region => {
       const bs = s.blocks.filter(b => (b.region || 'body') === region);
       return bs.length || region === 'body' ? `<div class="wf-region wf-region-${region}">${renderBlocks(bs, s, link)}</div>` : '';
     }).join('');
     const canvas = `<div class="wf-screenbar"><strong>${e(s.page)}</strong><span>${deviceLabel} · ${frame.width} × ${frame.height} · 状态：${e(s.state)}</span></div><div class="frame-host"><div class="frame-stage" style="width:${frame.width}px;height:${frame.height}px"><div class="wireframe device-${device}" data-frame-width="${frame.width}" data-frame-height="${frame.height}" style="width:${frame.width}px;height:${frame.height}px">${regions}</div></div></div>`;
     const typeLabel = b => ({ heading: '标题', text: '文本', notice: '提示', field: '字段', image: '图片', list: '列表', table: '表格', section: '区块', columns: '分栏', action: '操作' })[b.type] || b.type;
-    const blockLabel = b => b.text || (b.type === 'action' ? (s.actions.find(x => x.id === b.action)?.label || b.action) : b.type === 'list' ? `列表（${b.items.length} 项）` : b.type === 'table' ? `表格（${b.columns.join(' / ')}）` : b.id);
+    const blockLabel = b => { const label = b.text || (b.type === 'action' ? (s.actions.find(x => x.id === b.action)?.label || b.action) : b.type === 'list' ? `列表（${b.items.length} 项）` : b.type === 'table' ? `表格（${b.columns.join(' / ')}）` : b.note?.split('。')[0] || b.id); const line = String(label).split('\n')[0]; return line.length > 36 ? line.slice(0, 36) + '…' : line; };
     const specIntro = s.summary ? `<p class="spec-summary">${e(s.summary)}</p>` : '';
     const specLayout = s.layout?.length ? `<h4>页面布局</h4><ol class="layout-list">${s.layout.map(x => `<li>${e(x)}</li>`).join('')}</ol>` : '';
     const compNotesHTML = noteEntries.length ? `<h4>组件说明</h4><ol class="comp-notes">${noteEntries.map((b, i) => `<li data-target="${e(b.id)}"><span class="comp-num">${i + 1}</span><div class="comp-body"><strong>${e(blockLabel(b))}</strong><span class="comp-type">${e(typeLabel(b))}</span><p>${e(b.note)}</p></div></li>`).join('')}</ol>` : '';

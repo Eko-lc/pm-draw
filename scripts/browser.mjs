@@ -88,6 +88,7 @@ export async function connectBrowser(options = {}) {
     source: 'cdp',
     targets: async () => (await send('Target.getTargets')).targetInfos.filter(t => t.type === 'page'),
     open: async url => (await send('Target.createTarget', { url, background: true })).targetId,
+    focus: async target => { await send('Target.activateTarget', { targetId: target }); },
     evaluate: async (target, expression) => {
       const result = await send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true }, await attach(target));
       assert(!result.exceptionDetails, result.exceptionDetails?.exception?.description || '页面脚本执行失败');
@@ -97,6 +98,11 @@ export async function connectBrowser(options = {}) {
       const result = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false }, await attach(target));
       return Buffer.from(result.data, 'base64');
     },
+    setViewport: async (target, { width, height, deviceScaleFactor = 1, mobile = false }) => {
+      assert(Number.isInteger(width) && width > 0 && Number.isInteger(height) && height > 0 && Number.isFinite(deviceScaleFactor) && deviceScaleFactor > 0 && typeof mobile === 'boolean', '视口尺寸、像素比或 mobile 参数无效');
+      await send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor, mobile }, await attach(target));
+    },
+    clearViewport: async target => { await send('Emulation.clearDeviceMetricsOverride', {}, await attach(target)); },
     dispose: async () => {
       try { for (const sessionId of sessions.values()) if (socket.readyState === WebSocket.OPEN) await send('Target.detachFromTarget', { sessionId }); }
       finally { socket.close(); }

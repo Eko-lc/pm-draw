@@ -149,11 +149,19 @@ export function validateScreen(s, ctx) {
   }
   assert(s.actions.filter(a => a.role === 'primary').length <= 1, `${s.id} 每屏最多一个主操作（role: primary），其余用 secondary 或不标`);
   array(s.blocks, `${s.id}.blocks`); assert(s.blocks.length, `${s.id} 缺少低保真原型`);
+  const positioned = s.blocks.some(b => b.box !== undefined);
+  if (positioned) assert(s.blocks.every(b => b.box !== undefined), '使用 box 时所有顶层组件都需定位，不能混用流式布局');
   const blockIds = new Set(), drawnActions = new Set();
   function blocks(items, depth = 0) {
     for (const b of items) {
       id(b.id, 'block.id'); assert(!blockIds.has(b.id), `组件编号重复：${s.id}/${b.id}`); blockIds.add(b.id);
       requirement(b.requirement, `组件 ${b.id} 来源`);
+      if (b.box !== undefined) {
+        assert(depth === 0 && b.region === undefined && b.width === undefined && b.weight === undefined, 'box 仅用于顶层组件，不能同时设置 region / width / weight');
+        assert(Array.isArray(b.box) && b.box.length === 4 && b.box.every(Number.isFinite), 'box 必须为 [x,y,width,height]');
+        const [x,y,w,h] = b.box, f = frameOf(s);
+        assert(x >= 0 && x < f.width && y >= 0 && y < f.height && w > 0 && w <= 3840 && h > 0 && h <= 3840, 'box 起点须在画布内，宽高在 0–3840 内');
+      }
       if (b.region !== undefined) assert(depth === 0 && ['header', 'body', 'footer'].includes(b.region), 'region 仅用于顶层组件，取 header / body / footer');
       if (b.width !== undefined) assert(Number.isInteger(b.width) && b.width >= 40 && b.width <= frameOf(s).width && b.weight === undefined, '组件 width 必须在 40 到画布宽度之间，且不能同时设置 weight');
       if (b.align !== undefined) assert(['left', 'center', 'right'].includes(b.align), '组件 align 只能是 left / center / right');

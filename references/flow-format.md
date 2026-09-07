@@ -65,7 +65,9 @@
 | section / columns | children 组件数组，可选 text；分栏子项用 weight 1–4 表示相对宽度 |
 | action | action 为本屏操作 id |
 
-顶层组件可用 `region: header / body / footer` 分配固定顶部、滚动内容或固定底部（默认 body，嵌套组件不设 region）。组件可用 `width` 固定宽度，例如 PC 侧栏 240；与 weight 互斥。内部 columns 不随预览窗口自动换列。可用 align（left / center / right）。不接收任意 HTML、脚本或远程图像。线框顶部自动显示页面名与状态，不在 blocks 机械重复。
+顶层组件可用 `region: header / body / footer` 分配固定顶部、滚动内容或固定底部（默认 body，嵌套组件不设 region）。组件可用 `width` 固定宽度，例如 PC 侧栏 240；与 weight 互斥。内部 columns 不随预览窗口自动换列。可用 align（left / center / right）。不接收任意 HTML、脚本或远程图像。页面名、状态和终端尺寸自动显示在画布外；画布内部按产品实际需要绘制标题。
+
+准确复原复杂布局时，顶层组件可用 `box: [x, y, width, height]`（CSS 像素，原点为画布左上角）。同屏所有顶层组件都需 box，不能与 region / width / weight 混用；嵌套内容仍用普通布局。组件按数组顺序叠放，适合面板、浮动工具条与弹层。内容超出组件尺寸可滚动，超出画布会裁切；仅当截图确实如此时保留裁切，新方案需核对可操作性。不要为简单单列页测量每段文字。
 
 ## 截图参考 references
 
