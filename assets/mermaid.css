@@ -1,0 +1,10 @@
+/* 图示占用说明区，不参与产品画布布局。 */
+.diagram-section{margin:24px 0;min-width:0}.screen>.diagram-section{padding:0 20px}
+.mermaid-card{margin:14px 0;padding:16px;border:1px solid var(--border);background:var(--surface);min-width:0;overflow-wrap:anywhere;scroll-margin-top:24px}
+.mermaid-card figcaption{font-size:16px;font-weight:650;margin-bottom:8px}.diagram-description{color:var(--muted)}
+.diagram-tools{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:10px 0}.diagram-tools button{padding:5px 10px}.diagram-scale{font-size:12px;min-width:40px;color:var(--muted)}
+.diagram-view{width:100%;max-height:70vh;overflow:auto;border:1px solid var(--border);padding:12px;background:#fff}.diagram-stage{width:max-content;min-width:100%;line-height:0;text-align:center}.diagram-stage svg{display:block;margin:0 auto}
+.mermaid-card:not([data-diagram-state=ready]) .diagram-view{display:none}.diagram-status{color:var(--muted);font-size:12px;white-space:pre-wrap}.diagram-status:empty{display:none}.mermaid-card[data-diagram-state=error] .diagram-status{color:var(--danger)}
+.diagram-source{margin-top:10px}.diagram-source summary{cursor:pointer;color:var(--primary)}.diagram-source pre{margin:8px 0 0;padding:12px;background:var(--shade);white-space:pre;overflow:auto;max-height:320px;font:12px/1.6 ui-monospace,monospace}.diagram-origin,.diagram-hint{margin-top:8px;font-size:12px;color:var(--muted)}.diagram-hint:empty{display:none}
+@media(max-width:800px){.screen>.diagram-section{padding:0 14px}.mermaid-card{padding:12px}.diagram-tools button{min-height:40px}}
+@media print{.diagram-tools,.diagram-source,.diagram-status{display:none}.diagram-view{overflow:visible;max-height:none;border:0}.diagram-stage{width:100%}.diagram-stage svg{max-width:100%!important;height:auto!important}.mermaid-card{break-inside:avoid}.mermaid-card[data-diagram-state=error] .diagram-source,.mermaid-card[data-diagram-state=error] .diagram-status{display:block}}

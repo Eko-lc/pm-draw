@@ -1,6 +1,6 @@
 ---
 name: pm-draw
-description: 根据粗需求编写和迭代精简功能 PRD，提出带选项的决策问题；调研竞品页面截图，依据审查通过的 PRD 生成层级清晰的低保真 HTML 原型方案，并按页面标记、问题和建议局部修改。支持新功能、旧功能迭代，以及通过 CDP 分析指定竞品并输出观察复原 PRD、截图与原型方案。
+description: 根据粗需求编写和迭代精简功能 PRD，提出带选项的决策问题；调研竞品页面截图，依据审查通过的 PRD 生成低保真 HTML 原型，用 Mermaid 在 PRD 与 HTML 中显示交互、控制流或数据流，并按页面反馈局部修改。支持新功能、旧功能迭代，以及通过 CDP 分析指定竞品并输出观察复原 PRD、截图与原型方案。
 ---
 
 # PM Draw
@@ -38,6 +38,8 @@ description: 根据粗需求编写和迭代精简功能 PRD，提出带选项的
 
 写 `PRD-<product>.md`。将影响业务、流程和验收的未知事项集中为稳定的 Q 编号，每题给 2–3 个可执行选项、影响和有依据的建议。对话中集中提出本轮关键问题，继续完善不依赖答案的内容。用户回答后同时更新正文和决策记录；审查通过后代写状态与日期。
 
+用户要求图示，或交互、条件分支、状态变化、数据传递用图更清楚时，读取 [references/mermaid-guide.md](references/mermaid-guide.md)。在相关流程段落用标准 Mermaid 围栏配标题和简短说明；HTML 可直接引用 PRD 图示，保持一份源码。简单单步操作无须配图。
+
 ### 分析指定竞品
 
 读取 [references/competitor-analysis.md](references/competitor-analysis.md)。使用 CDP 访问用户指定页面、查看必要状态并采集截图，输出精简竞品 PRD 和低保真 HTML 方案。观察复原与改进建议分别标明；分析草稿可直接出图，不伪造本产品审批记录。
@@ -48,7 +50,7 @@ description: 根据粗需求编写和迭代精简功能 PRD，提出带选项的
 
 1. **研究参考**：读取 [references/browser-capture.md](references/browser-capture.md)，选择与本次关键交互相关的少量竞品页面，实际查看截图，记录来源、观察和具体借鉴点。通常 1–3 个产品即可，不写泛泛竞品报告。已有相关证据可复用，仅在过时或范围变化时补充。
 2. **组织方案**：读取 [references/wireframe-guide.md](references/wireframe-guide.md) 和 [references/flow-format.md](references/flow-format.md)。按用户路径提取需求原文和页面状态，创建 `mode: prototype`、`target.kind: none` 的 `flow.json`。旧页面与竞品截图写入可选 `references`，不启用 review 模式。用户明确说明是旧页面截图时用 `existing`，在截图上标记变更点并补充更新逻辑；明确说明是参考图时用 `competitor`，放入页面参考。
-3. **绘制与说明**：每屏标明 `device` 和画布尺寸，按终端绘制低保真原型，写清关键组件行为、数据从哪里来／如何更新／影响哪里、用户操作与自动状态流转、正向与相关异常路径。未决分支关联 PRD 的 Q 编号，不擅自补成规则。只有交互或布局明显不同的状态单独画屏，其余在说明中交代。
+3. **绘制与说明**：每屏标明 `device` 和画布尺寸，按终端绘制低保真原型，写清关键组件行为、数据从哪里来／如何更新／影响哪里、用户操作与自动状态流转、正向与相关异常路径。需要 Mermaid 时，按 mermaid-guide 将 `diagrams` 放在流程组或页面说明中；图示位于画布外，不能代替 `actions` / `transitions` 的实际跳转。未决分支关联 PRD 的 Q 编号，不擅自补成规则。只有交互或布局明显不同的状态单独画屏，其余在说明中交代。
 4. **生成**：运行 `node <SKILL>/scripts/pm-draw.mjs validate <flow.json>`，再 `build <flow.json> --out <site目录>`，最后运行 `view <site目录>`，用专用 CDP Chrome 打开页面并启动反馈保存服务。产物为 `index.html` 总索引和每个流程组一个 `<group-id>.html`，不逐屏拆文件。参考截图在索引集中展示，每屏链接到相关参考。
 
 小清单直接写 JSON。清单较大时用 `init` → `add-requirements` → 逐个 `add-group` 分块组装（每组写入 `groups/<id>.json`，flow.json 只保留索引），最后统一校验；已有整体清单可用 `split` 拆分。按反馈修改某组功能时，从索引定位后只读写对应分组文件，不必加载整个清单；命令见 flow-format。参考截图采集受阻时说明具体缺口并继续独立工作，不用线框冒充竞品截图，也不声称调研已完成。

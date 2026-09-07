@@ -524,3 +524,73 @@ test('精确定位布局拒绝混排、嵌套坐标和非法尺寸，并保持�
  delete s.blocks[0].region;s.blocks.push({id:'nested',type:'section',requirement:'r-list',box:[300,50,200,100],children:[{id:'child',type:'text',text:'nested',requirement:'r-list',box:[0,0,30,30]}]});assert.throws(()=>validate(f,prdText),/顶层/);
  assert.doesNotThrow(()=>validate(makeFlow(),prdText));
 });
+
+const diagramPRD = `${prdText}\n### 保存资料\n\n点击保存后等待结果。\n\n<!-- pm-draw:diagram save-flow -->\n\n\`\`\`mermaid\nflowchart LR\n  form["填写资料"] -->|点击保存| saving["提交中"]\n  saving -->|保存成功| list["列表刷新"]\n\`\`\`\n`;
+
+test('Mermaid 在 PRD、分组和屏幕中渲染容器，按需内嵌离线资源且保留安全源码', async () => {
+  const flow = makeFlow();
+  flow.groups[0].diagrams = [{ prd: 'save-flow' }];
+  flow.groups[0].screens[1].diagrams = [{ id: 'data-flow', title: '数据流 <script>', source: 'flowchart TD\n A["输入 </script><script>bad()</script>"] --> B["资料记录"]', description: '保存资料 & 刷新列表' }];
+  const files = await buildToFiles(flow, diagramPRD);
+  const index = files['index.html'], group = files['main.html'];
+  assert.match(index, /id="diagram-prd-save-flow"/);
+  assert.match(group, /id="diagram-group-main-save-flow"/);
+  assert.match(group, /href="index.html#diagram-prd-save-flow"/);
+  assert.match(group, /id="diagram-screen-create-form-data-flow"/);
+  assert.match(group, /输入 &lt;\/script&gt;&lt;script&gt;bad\(\)&lt;\/script&gt;/);
+  assert.doesNotMatch(group, /<script>bad\(\)/);
+  assert.match(group, /Mermaid 11\.17\.2/);
+  assert.doesNotMatch(group, /<script[^>]*\ssrc=/);
+  assert.match(group, /<details class="diagram-source" open>/, '禁用 JS 时仍能读源码');
+  const article = group.split('<article class="screen" id="screen-create-form">')[1].split('</article>')[0];
+  assert.ok(article.indexOf('id="diagram-screen-') > article.indexOf('</aside></div>'), '图示位于产品画布和旁注区之后');
+  const old = await buildToFiles(makeFlow());
+  assert.doesNotMatch(old['main.html'], /@pm-draw:mermaid/);
+  assert.ok(old['main.html'].length < 100000, '没有图的旧清单不附带 Mermaid bundle');
+  const { injectAssets } = await import('./render.mjs');
+  assert.equal(await injectAssets(group), group, '离线资源刷新可重复执行');
+});
+
+test('Mermaid 字段及 PRD 引用在 validate / add-group 使用同样校验', async () => {
+  const { validateGroupFragment } = await import('./model.mjs');
+  for (const diagrams of [null, {}, [{ prd: 'missing' }], [{ prd: 'save-flow', source: 'flowchart TD\nA-->B' }], [{ id: 'bad', title: '', source: 'flowchart TD\nA-->B' }], [{ id: 'bad', title: '标题', source: 'invalid' }], [{ id: 'bad', title: '标题', source: 'flowchart TD\n%%{init: {}}%%\nA-->B' }], [{ prd: 'save-flow' }, { prd: 'save-flow' }]]) {
+    const flow = makeFlow(); flow.groups[0].diagrams = diagrams;
+    assert.throws(() => validate(flow, diagramPRD));
+    assert.throws(() => validateGroupFragment(flow.groups[0], new Set(flow.requirements.map(r => r.id)), new Set(), new Set(), 'prototype', diagramPRD));
+    delete flow.groups[0].diagrams; flow.groups[0].screens[0].diagrams = diagrams;
+    assert.throws(() => validate(flow, diagramPRD));
+  }
+});
+
+test('PRD 图示引用经增量分组文件、跨轮反馈保留；源码变化更新屏幕摘要', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'pm-draw-diagrams-'));
+  const file = path.join(dir, 'flow.json'), prdFile = path.join(dir, 'PRD.md');
+  await fs.writeFile(prdFile, diagramPRD);
+  const flow = makeFlow();
+  flow.groups[0].screens[1].diagrams = [{ prd: 'save-flow' }];
+  await fs.writeFile(path.join(dir, 'requirements.json'), JSON.stringify(flow.requirements));
+  await fs.writeFile(path.join(dir, 'group.json'), JSON.stringify(flow.groups[0]));
+  await main(['init', file, '--prd', 'PRD.md', '--project', flow.project.id, '--title', flow.project.title]);
+  await main(['add-requirements', file, '--file', path.join(dir, 'requirements.json')]);
+  await main(['add-group', file, '--file', path.join(dir, 'group.json')]);
+  const out = path.join(dir, 'site');
+  await main(['build', file, '--out', out]);
+  const html = await fs.readFile(path.join(out, 'main.html'), 'utf8');
+  const model = JSON.parse(html.match(/<script id="pm-data" type="application\/json">(.*?)<\/script>/s)[1]);
+  const report = { schemaVersion: 1, kind: 'pm-draw-feedback', projectId: model.projectId, round: model.round, fingerprint: model.fingerprint, screens: model.screens.map(s => ({ ...s, mark: '', problem: '图示分支需细化', suggestion: '' })), groups: model.groups.map(g => ({ ...g, problem: '', suggestion: '' })), history: [] };
+  const reportFile = path.join(dir, 'feedback.json'), nextFile = path.join(dir, 'round-2', 'flow.json');
+  await fs.writeFile(reportFile, JSON.stringify(report));
+  await main(['next-round', file, '--feedback', reportFile, '--out', nextFile]);
+  const context = await loadManifest(nextFile);
+  assert.deepEqual(context.m.groups[0].screens[1].diagrams, [{ prd: 'save-flow' }]);
+  assert.equal(context.m.history[0].screens[1].problem, '图示分支需细化');
+  const { render } = await import('./render.mjs');
+  const unchanged = await render(context);
+  assert.match(unchanged['main.html'], /与上一轮一致/);
+  await fs.writeFile(prdFile, diagramPRD.replace('列表刷新', '资料列表刷新'));
+  const changed = await render(await loadManifest(nextFile));
+  const changedModel = JSON.parse(changed['main.html'].match(/<script id="pm-data" type="application\/json">(.*?)<\/script>/s)[1]);
+  assert.notEqual(changedModel.screens[1].contentHash, model.screens[1].contentHash);
+  assert.equal(changedModel.screens[1].changeLabel, '已更新');
+  assert.equal(changedModel.screens[0].contentHash, model.screens[0].contentHash);
+});

@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { loadManifest, loadRaw, screens, live, assert, sha, planHash, requireApproval, saveJSON, saveManifest, readImage, validateReport, feedbackFingerprint, screenHash, prdStatus, validateGroupFragment, validateRequirementFragment } from './model.mjs';
 import { render } from './render.mjs';
+import { extractPrdDiagrams } from './diagrams.mjs';
 import { connectBrowser, inspectTarget } from './browser.mjs';
 
 const usage = `pm-draw · Node.js 22+，无 npm 运行依赖
@@ -125,11 +126,11 @@ export async function main(argv = process.argv.slice(2)) {
     console.log(`已加入 ${frag.length} 条需求（共 ${m.requirements.length} 条）`); return;
   }
   if (command === 'add-group') {
-    const { m, groupFiles } = await loadLoose(file);
+    const { m, groupFiles, prdText } = await loadLoose(file);
     const g = JSON.parse(await fs.readFile(required(options, 'file'), 'utf8'));
     const reqIds = new Set(m.requirements.map(r => r.id));
     const takenGroupIds = new Set(m.groups.map(x => x.id)), takenScreenIds = new Set(screens(m).map(s => s.id));
-    validateGroupFragment(g, reqIds, takenGroupIds, takenScreenIds, m.mode);
+    validateGroupFragment(g, reqIds, takenGroupIds, takenScreenIds, m.mode, prdText);
     groupFiles.set(g.id, `groups/${g.id}.json`);
     m.groups.push(g);
     await saveManifest(path.resolve(file), m, groupFiles);
@@ -179,7 +180,8 @@ export async function main(argv = process.argv.slice(2)) {
     validateReport(report, m.project.id);
     assert(report.round === m.round && report.fingerprint === feedbackFingerprint(m, prdHash), '反馈与当前清单版本不一致。请先从对应 HTML 导出反馈并创建下一轮，再修改清单。');
     const expected = screens(m);
-    assert(report.screens.length === expected.length && new Set(report.screens.map(s => s.id)).size === expected.length && expected.every(s => report.screens.some(r => r.id === s.id && r.page === s.page && r.state === s.state && r.contentHash === screenHash(s, m.groups.find(g => g.screens.includes(s)).id, m.requirements))), '反馈页面清单或内容摘要不完整');
+    const prdDiagrams = extractPrdDiagrams(context.prdText);
+    assert(report.screens.length === expected.length && new Set(report.screens.map(s => s.id)).size === expected.length && expected.every(s => report.screens.some(r => r.id === s.id && r.page === s.page && r.state === s.state && r.contentHash === screenHash(s, m.groups.find(g => g.screens.includes(s)).id, m.requirements, prdDiagrams))), '反馈页面清单或内容摘要不完整');
     assert(report.groups.length === m.groups.length && new Set(report.groups.map(g => g.id)).size === m.groups.length && m.groups.every(g => report.groups.some(r => r.id === g.id)), '流程反馈不完整');
     const out = path.resolve(required(options, 'out'));
     const { history: ignoredHistory, ...snapshot } = report;

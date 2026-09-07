@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+import { extractPrdDiagrams, resolveDiagrams } from './diagrams.mjs';
 
 export const sha = value => createHash('sha256').update(value).digest('hex');
 export const stable = value => JSON.stringify(value, (_, v) => v && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.keys(v).sort().map(k => [k, v[k]])) : v);
@@ -61,6 +62,7 @@ export async function loadManifest(file) {
 }
 
 export function validate(m, prdText) {
+  const prdDiagrams = extractPrdDiagrams(prdText);
   assert(m.schemaVersion === 1, '不支持的 schemaVersion');
   id(m.project?.id, 'project.id'); string(m.project?.title, 'project.title');
   assert(Number.isSafeInteger(m.round) && m.round > 0, 'round 必须是正整数');
@@ -80,7 +82,8 @@ export function validate(m, prdText) {
   for (const g of m.groups) {
     id(g.id, 'group.id'); assert(!groupIds.has(g.id), `流程编号重复：${g.id}`); groupIds.add(g.id);
     string(g.title, `${g.id}.title`); array(g.screens, `${g.id}.screens`); assert(g.screens.length, '流程分组不能没有页面');
-    for (const s of g.screens) for (const r of validateScreen(s, { requirement, screenIds, mode: m.mode })) covered.add(r);
+    resolveDiagrams(g.diagrams, g.id, prdDiagrams);
+    for (const s of g.screens) for (const r of validateScreen(s, { requirement, screenIds, mode: m.mode, prdDiagrams })) covered.add(r);
   }
   for (const s of screens(m)) for (const a of s.actions) assert(a.to === null || a.to === '待确认' || screenIds.has(a.to), `${s.id} 跳转目标不存在：${a.to}`);
   for (const s of screens(m)) for (const t of s.transitions || []) assert(t.to === '待确认' || screenIds.has(t.to), `${s.id} 自动流转目标不存在：${t.to}`);
@@ -138,6 +141,7 @@ export function validateScreen(s, ctx) {
   if (s.layout !== undefined) { array(s.layout, `${s.id}.layout`); s.layout.forEach(v => string(v, '布局说明')); }
   if (s.logic !== undefined) { array(s.logic, `${s.id}.logic`); s.logic.forEach(v => string(v, '逻辑规则')); }
   if (s.dataFlow !== undefined) { array(s.dataFlow, `${s.id}.dataFlow`); s.dataFlow.forEach(v => string(v, '数据流向')); }
+  resolveDiagrams(s.diagrams, s.id, ctx.prdDiagrams);
   array(s.actions, `${s.id}.actions`); const actionIds = new Set();
   if (s.transitions) { array(s.transitions, 'transitions'); for (const t of s.transitions) { string(t.condition, '自动流转条件'); string(t.to, '自动流转目标'); requirement(t.requirement, '自动流转来源'); } }
   for (const a of s.actions) {
@@ -204,11 +208,13 @@ export function validateScreen(s, ctx) {
 
 // 增量添加单个流程分组的结构校验：结构与需求引用；不做跨组页面跳转与覆盖检查（由 validate 全局负责）。
 // takenGroupIds / takenScreenIds 为已存在编号，用于检测重复；本组页面编号会被占用（加入 takenScreenIds）。
-export function validateGroupFragment(g, reqIds, takenGroupIds, takenScreenIds, mode) {
+export function validateGroupFragment(g, reqIds, takenGroupIds, takenScreenIds, mode, prdText = '') {
   id(g.id, 'group.id'); assert(!takenGroupIds.has(g.id), `流程编号重复：${g.id}`);
   string(g.title, `${g.id}.title`); array(g.screens, `${g.id}.screens`); assert(g.screens.length, '流程分组不能没有页面');
   const requirement = (v, label) => assert(reqIds.has(v) || v === '待确认', `${label} 必须引用需求编号或「待确认」`);
-  const ctx = { requirement, screenIds: takenScreenIds, mode };
+  const prdDiagrams = extractPrdDiagrams(prdText);
+  resolveDiagrams(g.diagrams, g.id, prdDiagrams);
+  const ctx = { requirement, screenIds: takenScreenIds, mode, prdDiagrams };
   for (const s of g.screens) validateScreen(s, ctx);
 }
 
@@ -224,8 +230,9 @@ export function requireApproval(m, prdHash, screenId) {
   if (screenId && m.approval.screenIds) assert(m.approval.screenIds.includes(screenId), `页面 ${screenId} 不在本次已确认的截图范围内`);
 }
 
-export function screenHash(s, groupId, requirements = []) {
+export function screenHash(s, groupId, requirements = [], prdDiagrams = []) {
   const { screenshot, blockedReason, changeSummary, ...rest } = s;
+  if (s.diagrams?.some(d => d.prd)) rest.diagrams = resolveDiagrams(s.diagrams, s.id, prdDiagrams).map(({ line, ...d }) => d);
   return sha(stable({ ...rest, groupId, requirementDefinitions: requirements.filter(r => s.requirements.includes(r.id)), screenshot: screenshot?.sha256 || null }));
 }
 export function feedbackFingerprint(m, prdHash) { return sha(stable({ project: m.project, round: m.round, prdHash, groups: m.groups, requirements: m.requirements, ...(m.references?.length ? { references: m.references } : {}), history: m.history || [] })); }

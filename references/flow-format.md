@@ -14,7 +14,7 @@
 | mode / target | 日常设计固定 `prototype` / `{kind: "none"}`；参考截图也用此模式 |
 | prd.path | 本轮 PRD 路径；文首状态由 validate 报告并显示在 HTML，草稿会提示仅供讨论 |
 | requirements | `{id, text, quote}` 数组；quote 是 PRD 中存在的连续原文，text 不扩展含义 |
-| groups | 按用户阅读顺序排列。小清单直接内联 `{id, title, description?, screens}`；大清单用索引条目 `{id, title, file}` 指向 `groups/<id>.json`（内容为完整分组），两种形式可混用 |
+| groups | 按用户阅读顺序排列。小清单直接内联 `{id, title, description?, diagrams?, screens}`；大清单用索引条目 `{id, title, file}` 指向 `groups/<id>.json`（内容为完整分组），两种形式可混用 |
 | references | 可选截图参考数组，格式见下文；不属于产品需求 |
 | history / baseline | next-round 管理，保留历史原话，不手工伪造 |
 
@@ -50,6 +50,15 @@
 - `pending`：未确定规则，引用 PRD 的 Q 编号与短问题，完整选项留在 PRD。
 - `changeSummary`：本轮实际改动，简短说明即可。
 - `annotations`：可选 `{component, requirement, original, change}` 数组，按组件记录旧逻辑与修改点；原逻辑注明观察或用户描述来源。
+- `diagrams`：可选 Mermaid 图示数组，流程组也支持，格式见下文。说明图放画布外，不是 blocks 组件。
+
+### Mermaid 图示 diagrams
+
+每项二选一：引用 PRD 已有图 `{ "prd": "save-flow" }`，或内联 `{ "id": "data-update", "title": "资料更新", "source": "flowchart LR\n  input[\"用户输入\"] -->|保存| record[\"资料记录\"]", "description": "可选的一句读图说明" }`。引用只填 `prd`，沿用原图标题与源码；内联的 id / title / source 必填，description 可省略。同一 diagrams 数组内 id 不重复，不同组或屏幕可复用。
+
+PRD 用标准 `mermaid` 围栏，紧前加 `<!-- pm-draw:diagram save-flow -->` 建立稳定编号。全部 PRD 图自动出现在 HTML 总索引；被引用的图也展示于相应组／屏幕。无标记的 PRD 图按顺序获得 `prd-diagram-1` 等编号，需引用时先补稳定标记，避免插图后编号漂移。标题取最近的 Markdown 标题。完整示例和图型选择见 [mermaid-guide.md](mermaid-guide.md)。
+
+支持 flowchart / graph、sequenceDiagram、stateDiagram-v2。source 只放源码，不含 Markdown 围栏、配置 frontmatter 或 `%%{...}%%` 指令；每图最多 50000 字符，长图按任务拆分。validate / add-group 校验结构、图型、编号与引用，浏览器实际校验 Mermaid 语法并渲染。错误图会展开源码并提示，不中断其他图、页面跳转或反馈；交付前仍需修正错误。新字段可省略，旧清单无需迁移；分组拆分、next-round 和反馈指纹保留图示及 PRD 版本关系。
 
 ### 线框组件 blocks
 
